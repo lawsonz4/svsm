@@ -5,6 +5,7 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 mod api;
+mod blockfs;
 mod buffer;
 mod console;
 mod filesystem;
@@ -13,6 +14,7 @@ mod obj;
 mod ramfs;
 
 pub use api::*;
+pub use blockfs::initialize_blk;
 pub use buffer::*;
 pub use console::{stdout_open, ConsoleFile};
 pub use filesystem::*;
