@@ -54,6 +54,24 @@ FILE *fopen(const char *c, const char *m)
     return NULL;
 }
 
+int fseek(FILE *stream, long offset, int whence)
+{
+    NOT_IMPLEMENTED;
+    return -1;
+}
+
+long ftell(FILE *stream)
+{
+    NOT_IMPLEMENTED;
+    return -1;
+}
+
+int fflush(FILE *stream)
+{
+    NOT_IMPLEMENTED;
+    return EOF;
+}
+
 int fputc(int c, FILE *f) 
 {
     NOT_IMPLEMENTED;

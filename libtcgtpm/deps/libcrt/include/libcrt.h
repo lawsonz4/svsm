@@ -367,6 +367,9 @@ size_t fread(void *, size_t, size_t, FILE *);
 size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream);
 int fprintf(FILE *, const char *, ...);
 int fputc(int c, FILE *f);
+int fseek(FILE *stream, long offset, int whence);
+long ftell(FILE *stream);
+int fflush(FILE *stream);
 
 int ferror(FILE *stream);
 int clearerr(FILE *stream);
