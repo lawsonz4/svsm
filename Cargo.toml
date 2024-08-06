@@ -82,6 +82,7 @@ sha2 = { version = "0.10.8", default-features = false }
 uuid = { version = "1.6.1", default-features = false }
 # Add the derive feature by default because all crates use it.
 zerocopy = { version = "0.8.2", features = ["derive"] }
+postcard = { version = "1.0", default-features = false }
 
 # Verus repos
 builtin = { git = "https://github.com/verus-lang/verus", rev ="6c66898", default-features = false }

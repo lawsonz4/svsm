@@ -51,7 +51,8 @@ kbs-types = { workspace = true, optional = true, features = ["alloc"] }
 log = { workspace = true, features = ["max_level_info", "release_max_level_info"] }
 packit.workspace = true
 libtcgtpm = { workspace = true, optional = true }
-serde = { workspace = true, optional = true, features = ["alloc", "derive"] }
+postcard = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
 serde_json = { workspace = true, optional = true, features = ["alloc"] }
 zerocopy = { workspace = true, features = ["alloc", "derive"] }
 release.workspace = true
@@ -74,7 +75,6 @@ test.workspace = true
 
 [features]
 attest = ["dep:aes", "dep:base64", "dep:cocoon-tpm-crypto", "dep:cocoon-tpm-tpm2-interface", "dep:cocoon-tpm-utils-common", "dep:kbs-types", "dep:libaproxy", "dep:serde", "dep:serde_json"]
-
 default = []
 enable-gdb = ["dep:gdbstub", "dep:gdbstub_arch"]
 vtpm = ["dep:libtcgtpm"]
