@@ -182,6 +182,17 @@ extern void *calloc(size_t nmemb, size_t size);
 extern void free(void *ptr);
 extern _Noreturn void abort(void);
 
+struct FileWrapper;
+
+extern struct FileWrapper **fopen_wrap(const char *restrict pathname, const char *restrict mode);
+extern int fclose_wrap(struct FileWrapper *stream);
+extern int fseek_wrap(struct FileWrapper *stream, long offset, int whence);
+extern long ftell_wrap(struct FileWrapper *stream);
+extern size_t fread_wrap(void *ptr, size_t size, size_t nmemb,
+                         struct FileWrapper *stream);
+extern size_t fwrite_wrap(const void *ptr, size_t size, size_t nmemb,
+                          struct FileWrapper *stream);
+
 int atoi(const char *s);
 int atexit(void (*func)(void));
 

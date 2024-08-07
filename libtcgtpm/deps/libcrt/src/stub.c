@@ -32,44 +32,38 @@ int sscanf(const char  *buffer, const char  *format, ...)
 
 size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream)
 {
-    NOT_IMPLEMENTED;
-    return 0;
+    return fwrite_wrap(buffer, size, count, (struct FileWrapper *)stream);
 }
 
 size_t fread(void *b, size_t c, size_t i, FILE *f)
 {
-    NOT_IMPLEMENTED;
-    return 0;
+    return fread_wrap(b, c, i, (struct FileWrapper *)f);
 }
 
 int fclose(FILE *f)
 {
-    NOT_IMPLEMENTED;
-    return EOF;
+    return fclose_wrap((struct FileWrapper *)f);
 }
 
 FILE *fopen(const char *c, const char *m)
 {
-    NOT_IMPLEMENTED;
-    return NULL;
+    return (FILE *)fopen_wrap(c, m);
 }
 
 int fseek(FILE *stream, long offset, int whence)
 {
-    NOT_IMPLEMENTED;
-    return -1;
+    return fseek_wrap((struct FileWrapper *)stream, offset, whence);
 }
 
 long ftell(FILE *stream)
 {
-    NOT_IMPLEMENTED;
-    return -1;
+    return ftell_wrap((struct FileWrapper *)stream);
 }
 
 int fflush(FILE *stream)
 {
-    NOT_IMPLEMENTED;
-    return EOF;
+    //TODO: for now it's not needed, but we should implement it
+    return 0;
 }
 
 int fputc(int c, FILE *f) 

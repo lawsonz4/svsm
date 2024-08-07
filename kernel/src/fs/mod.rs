@@ -16,7 +16,7 @@ mod ramfs;
 
 pub use api::*;
 #[cfg(feature = "virtio-drivers")]
-pub use blockfs::initialize_blk;
+pub use blockfs::{initialize_blk, BlockFile};
 pub use buffer::*;
 pub use console::{stdout_open, ConsoleFile};
 pub use filesystem::*;
