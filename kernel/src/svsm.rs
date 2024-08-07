@@ -369,7 +369,7 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     initialize_blk(Some([1; 64]));
 
     #[cfg(all(feature = "vtpm", not(test)))]
-    vtpm_init().expect("vTPM failed to initialize");
+    vtpm_init(false).expect("vTPM failed to initialize");
 
     #[cfg(all(feature = "uefivars", not(test)))]
     uefi_mm_protocol_init().expect("uefi mm protocol failed to initialize");

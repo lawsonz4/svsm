@@ -21,7 +21,8 @@ use alloc::vec::Vec;
 use core::ffi::c_void;
 use libtcgtpm::bindings::{
     TPM_Manufacture, TPM_TearDown, _plat__LocalitySet, _plat__NVDisable, _plat__NVEnable,
-    _plat__RunCommand, _plat__SetNvAvail, _plat__Signal_PowerOn, _plat__Signal_Reset,
+    _plat__NVNeedsManufacture, _plat__RunCommand, _plat__SetNvAvail, _plat__Signal_PowerOn,
+    _plat__Signal_Reset,
 };
 
 use crate::{
@@ -176,7 +177,7 @@ impl VtpmInterface for TcgTpm {
         self.is_powered_on
     }
 
-    fn init(&mut self) -> Result<(), SvsmReqError> {
+    fn init(&mut self, manufacture: bool) -> Result<(), SvsmReqError> {
         // Initialize the TPM TCG following the same steps done in the Simulator:
         //
         // 1. Manufacture it for the first time
@@ -187,28 +188,32 @@ impl VtpmInterface for TcgTpm {
         //    and selftest it.
 
         // SAFETY: FFI call. Parameters and return values are checked.
-        let mut rc = unsafe { _plat__NVEnable(VirtAddr::null().as_mut_ptr::<c_void>(), 0) };
+        let rc = unsafe { _plat__NVEnable(VirtAddr::null().as_mut_ptr::<c_void>(), 0) };
         if rc != 0 {
             log::error!("_plat__NVEnable failed rc={}", rc);
             return Err(SvsmReqError::incomplete());
         }
 
-        rc = self.manufacture(1)?;
-        if rc != 0 {
-            // SAFETY: FFI call. Parameter checked, no return value.
-            unsafe { _plat__NVDisable(1 as *mut c_void, 0) };
-            return Err(SvsmReqError::incomplete());
-        }
+        if manufacture || unsafe { _plat__NVNeedsManufacture() != 0 } {
+            log::info!("VTPM: manufacturing...");
 
-        rc = self.manufacture(0)?;
-        if rc != 1 {
-            return Err(SvsmReqError::incomplete());
-        }
+            let mut rc = self.manufacture(1)?;
+            if rc != 0 {
+                // SAFETY: FFI call. Parameter checked, no return value.
+                unsafe { _plat__NVDisable(1 as *mut c_void, 0) };
+                return Err(SvsmReqError::incomplete());
+            }
 
-        self.teardown()?;
-        rc = self.manufacture(1)?;
-        if rc != 0 {
-            return Err(SvsmReqError::incomplete());
+            rc = self.manufacture(0)?;
+            if rc != 1 {
+                return Err(SvsmReqError::incomplete());
+            }
+
+            self.teardown()?;
+            rc = self.manufacture(1)?;
+            if rc != 0 {
+                return Err(SvsmReqError::incomplete());
+            }
         }
 
         self.signal_poweron(false)?;
