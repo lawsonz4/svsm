@@ -64,6 +64,7 @@ log = { workspace = true, features = [
 packit.workspace = true
 libtcgtpm = { workspace = true, optional = true }
 postcard = { workspace = true, features = ["alloc"] }
+xts-mode = { version = "=0.5.1", default-features = false }
 serde = { workspace = true, features = ["alloc", "derive"] }
 serde_json = { workspace = true, optional = true, features = ["alloc"] }
 zerocopy = { workspace = true, features = ["alloc", "derive"] }

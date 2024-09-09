@@ -364,8 +364,9 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         log::info!("attestation successful");
     }
 
+    // Load the encryption key
     #[cfg(feature = "virtio-drivers")]
-    initialize_blk();
+    initialize_blk(Some([1; 64]));
 
     #[cfg(all(feature = "vtpm", not(test)))]
     vtpm_init().expect("vTPM failed to initialize");

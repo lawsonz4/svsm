@@ -7,26 +7,85 @@ use crate::fw_cfg::FwCfg;
 use crate::locking::RWLock;
 use crate::platform::SVSM_PLATFORM;
 
+use aes_gcm::{aes::cipher::generic_array::GenericArray, aes::cipher::KeyInit, aes::Aes256};
 use core::cmp::min;
 use core::ops::DerefMut;
 use postcard;
 use serde::{Deserialize, Serialize};
 use virtio_drivers::device::blk::SECTOR_SIZE;
+use xts_mode::{get_tweak_default, Xts128};
 
-unsafe impl Send for VirtIOBlkDriver {}
-unsafe impl Sync for VirtIOBlkDriver {}
+struct EncryptedVirtIOBlkDriver {
+    blk: VirtIOBlkDriver,
+    xts: Option<Xts128<Aes256>>,
+}
 
-static BLOCK_DEVICE: RWLock<Option<VirtIOBlkDriver>> = RWLock::new(None);
+impl EncryptedVirtIOBlkDriver {
+    pub fn new(blk: VirtIOBlkDriver, encryption_key: Option<[u8; 64]>) -> Self {
+        let xts = if let Some(key) = encryption_key {
+            let cipher_1 = Aes256::new(GenericArray::from_slice(&key[..32]));
+            let cipher_2 = Aes256::new(GenericArray::from_slice(&key[32..]));
+            Some(Xts128::<Aes256>::new(cipher_1, cipher_2))
+        } else {
+            None
+        };
 
-pub fn initialize_blk() {
+        EncryptedVirtIOBlkDriver { blk, xts }
+    }
+}
+
+impl BlockDriver for EncryptedVirtIOBlkDriver {
+    fn read_blocks(&self, block_id: usize, buf: &mut [u8]) -> Result<(), SvsmError> {
+        self.blk.read_blocks(block_id, buf)?;
+
+        if let Some(xts) = &self.xts {
+            xts.decrypt_area(buf, SECTOR_SIZE, 0, get_tweak_default);
+        }
+
+        Ok(())
+    }
+
+    fn write_blocks(&self, block_id: usize, buf: &[u8]) -> Result<(), SvsmError> {
+        if let Some(xts) = &self.xts {
+            let mut buf_enc = buf.to_vec();
+
+            xts.encrypt_area(&mut buf_enc, SECTOR_SIZE, 0, get_tweak_default);
+
+            self.blk.write_blocks(block_id, &buf_enc)
+        } else {
+            self.blk.write_blocks(block_id, buf)
+        }
+    }
+
+    fn block_size_log2(&self) -> u8 {
+        self.blk.block_size_log2()
+    }
+
+    fn size(&self) -> usize {
+        self.blk.size()
+    }
+
+    fn flush(&self) -> Result<(), SvsmError> {
+        self.blk.flush()
+    }
+}
+
+unsafe impl Send for EncryptedVirtIOBlkDriver {}
+unsafe impl Sync for EncryptedVirtIOBlkDriver {}
+
+static BLOCK_DEVICE: RWLock<Option<EncryptedVirtIOBlkDriver>> = RWLock::new(None);
+
+pub fn initialize_blk(key: Option<[u8; 64]>) {
     let cfg = FwCfg::new(SVSM_PLATFORM.get_io_port());
 
-    let dev = cfg
+    let blk = cfg
         .get_virtio_mmio_addresses()
         .unwrap_or_default()
         .iter()
         .find_map(|a| VirtIOBlkDriver::new(PhysAddr::from(*a)).ok())
         .expect("No virtio-blk device found");
+
+    let dev = EncryptedVirtIOBlkDriver::new(blk, key);
 
     *BLOCK_DEVICE.lock_write().deref_mut() = Some(dev);
 }
