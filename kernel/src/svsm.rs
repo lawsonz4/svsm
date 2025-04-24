@@ -355,18 +355,27 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         panic!("Failed to prepare guest FW: {e:#?}");
     }
 
-    #[cfg(feature = "attest")]
-    {
-        let mut proxy = AttestationDriver::try_from(Tee::Snp).unwrap();
-        let _data = proxy.attest().unwrap();
-
-        // Nothing to do with data at the moment, simply print a success message.
-        log::info!("attestation successful");
-    }
-
     // Load the encryption key
+    let key = {
+        #[cfg(feature = "attest")]
+        {
+            let mut proxy = AttestationDriver::try_from(Tee::Snp).unwrap();
+            let secret = proxy.attest().expect("Remote attestation failed");
+
+            let mut xts_key = [0; 64];
+            xts_key[..64].copy_from_slice(&secret);
+
+            Some(xts_key)
+        }
+
+        #[cfg(not(feature = "attest"))]
+        {
+            None
+        }
+    };
+
     #[cfg(feature = "virtio-drivers")]
-    initialize_blk(Some([1; 64]));
+    initialize_blk(key);
 
     #[cfg(all(feature = "vtpm", not(test)))]
     vtpm_init(false).expect("vTPM failed to initialize");
