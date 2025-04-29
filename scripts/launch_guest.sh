@@ -131,7 +131,7 @@ if (( QEMU_MAJOR >= 9 )); then
       exit 1
   esac
   MACHINE=q35,confidential-guest-support=cgs0,memory-backend=mem0,igvm-cfg=igvm0,accel=$ACCEL
-  MEMORY=memory-backend-memfd,size=8G,id=mem0,share=true,prealloc=false,reserve=false
+  MEMORY=memory-backend-memfd,size=2G,id=mem0,share=true,prealloc=false,reserve=false
   IGVM_OBJ="-object igvm-cfg,id=igvm0,file=$IGVM"
 elif (( (QEMU_MAJOR > 8) || ((QEMU_MAJOR == 8) && (QEMU_MINOR >= 2)) )); then
   MACHINE=q35,confidential-guest-support=sev0,memory-backend=mem0,accel=$ACCEL
@@ -139,7 +139,7 @@ elif (( (QEMU_MAJOR > 8) || ((QEMU_MAJOR == 8) && (QEMU_MINOR >= 2)) )); then
   SNP_GUEST="-object sev-snp-guest,id=sev0,cbitpos=$C_BIT_POS,reduced-phys-bits=1,init-flags=5,igvm-file=$IGVM"
 else
   MACHINE=q35,confidential-guest-support=sev0,memory-backend=mem0,kvm-type=protected,accel=$ACCEL
-  MEMORY=memory-backend-memfd-private,size=8G,id=mem0,share=true
+  MEMORY=memory-backend-memfd-private,size=2G,id=mem0,share=true
   SNP_GUEST="-object sev-snp-guest,id=sev0,cbitpos=$C_BIT_POS,reduced-phys-bits=1,init-flags=5,igvm-file=$IGVM"
 fi
 
