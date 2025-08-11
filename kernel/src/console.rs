@@ -106,30 +106,22 @@ impl log::Log for ConsoleLogger {
         // The logger being uninitialized is impossible, as that would mean it
         // wouldn't have been registered with the log library.
         // Log format/detail depends on the level.
-        match record.metadata().level() {
-            log::Level::Error | log::Level::Warn => {
-                _print(format_args!(
-                    "[{}] {}: {}\n",
-                    self.name,
-                    record.metadata().level().as_str(),
-                    record.args()
-                ));
-            }
-
-            log::Level::Info => {
-                _print(format_args!("[{}] {}\n", self.name, record.args()));
-            }
-
-            log::Level::Debug | log::Level::Trace => {
-                _print(format_args!(
-                    "[{}/{}] {} {}\n",
-                    self.name,
-                    record.metadata().target(),
-                    record.metadata().level().as_str(),
-                    record.args()
-                ));
-            }
+        let level_char = match record.metadata().level() {
+            log::Level::Error => 'E',
+            log::Level::Warn => 'W',
+            log::Level::Info => 'I',
+            log::Level::Debug => 'D',
+            log::Level::Trace => 'T',
         };
+
+        _print(format_args!(
+            "[{} {}/{}] {} {}\n",
+            level_char,
+            self.name,
+            record.metadata().target(),
+            record.metadata().level().as_str(),
+            record.args()
+        ));
     }
 
     fn flush(&self) {}
