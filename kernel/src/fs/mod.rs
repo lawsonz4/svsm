@@ -5,6 +5,7 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 mod api;
+#[cfg(feature = "virtio-drivers")]
 mod blockfs;
 mod buffer;
 mod console;
@@ -14,6 +15,7 @@ mod obj;
 mod ramfs;
 
 pub use api::*;
+#[cfg(feature = "virtio-drivers")]
 pub use blockfs::initialize_blk;
 pub use buffer::*;
 pub use console::{stdout_open, ConsoleFile};
