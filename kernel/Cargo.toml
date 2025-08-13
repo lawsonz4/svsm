@@ -31,15 +31,24 @@ base64 = { workspace = true, optional = true, features = ["alloc"] }
 bitfield-struct.workspace = true
 bitflags.workspace = true
 cocoon-tpm-crypto = { workspace = true, features = [
-    "enable_arch_math_asm", "zeroize",
-    # Enable x86 rdseed based rng.
-    "enable_x86_64_rdseed",
-    # At least one of block cipher, mode and hash is needed,
-    # otherwise compilation will fail due to empty enums.
-    "aes", "cfb", "sha256", "sha384", "sha512",
-    "ecc", "ecdh", "ecdsa",
-    "ecc_nist_p224", "ecc_nist_p256",
-    "ecc_nist_p384", "ecc_nist_p521",
+  "enable_arch_math_asm",
+  "zeroize",
+  # Enable x86 rdseed based rng.
+  "enable_x86_64_rdseed",
+  # At least one of block cipher, mode and hash is needed,
+  # otherwise compilation will fail due to empty enums.
+  "aes",
+  "cfb",
+  "sha256",
+  "sha384",
+  "sha512",
+  "ecc",
+  "ecdh",
+  "ecdsa",
+  "ecc_nist_p224",
+  "ecc_nist_p256",
+  "ecc_nist_p384",
+  "ecc_nist_p521",
 ], optional = true }
 cocoon-tpm-tpm2-interface = { workspace = true, optional = true }
 cocoon-tpm-utils-common = { workspace = true, optional = true }
@@ -48,7 +57,10 @@ gdbstub_arch = { workspace = true, optional = true }
 igvm_defs = { workspace = true, features = ["unstable"] }
 intrusive-collections.workspace = true
 kbs-types = { workspace = true, optional = true, features = ["alloc"] }
-log = { workspace = true, features = ["max_level_info", "release_max_level_info"] }
+log = { workspace = true, features = [
+  "max_level_info",
+  "release_max_level_info",
+] }
 packit.workspace = true
 libtcgtpm = { workspace = true, optional = true }
 postcard = { workspace = true, features = ["alloc"] }
@@ -65,22 +77,38 @@ virtfw-varstore = { version = "0.3.4", optional = true }
 
 builtin = { workspace = true, optional = true }
 builtin_macros = { workspace = true, optional = true }
-vstd = { workspace = true, optional = true}
-verify_proof = { workspace = true, optional = true}
-verify_external = { workspace = true, optional = true}
+vstd = { workspace = true, optional = true }
+verify_proof = { workspace = true, optional = true }
+verify_external = { workspace = true, optional = true }
 verus_stub = { workspace = true }
 
 [target."x86_64-unknown-none".dev-dependencies]
 test.workspace = true
 
 [features]
-attest = ["dep:aes", "dep:base64", "dep:cocoon-tpm-crypto", "dep:cocoon-tpm-tpm2-interface", "dep:cocoon-tpm-utils-common", "dep:kbs-types", "dep:libaproxy", "dep:serde", "dep:serde_json"]
+attest = [
+  "dep:aes",
+  "dep:base64",
+  "dep:cocoon-tpm-crypto",
+  "dep:cocoon-tpm-tpm2-interface",
+  "dep:cocoon-tpm-utils-common",
+  "dep:kbs-types",
+  "dep:libaproxy",
+  "dep:serde_json",
+]
 default = []
 enable-gdb = ["dep:gdbstub", "dep:gdbstub_arch"]
 vtpm = ["dep:libtcgtpm"]
 nosmep = []
 nosmap = []
-verus_all = ["builtin", "builtin_macros", "vstd", "verify_proof/verus", "verify_external/verus", "verus_stub/disable"]
+verus_all = [
+  "builtin",
+  "builtin_macros",
+  "vstd",
+  "verify_proof/verus",
+  "verify_external/verus",
+  "verus_stub/disable",
+]
 verus = ["verus_all", "verify_proof/noverify", "verify_external/noverify"]
 noverify = []
 virtio-drivers = ["dep:virtio-drivers"]
