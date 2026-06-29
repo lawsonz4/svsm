@@ -15,6 +15,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
+use crate::vtpm::tcgtpm::tss;
+
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
 
@@ -100,11 +102,44 @@ static VTPM: SpinLock<Vtpm> = SpinLock::new(Vtpm::new());
 /// Initialize the TPM by calling the init() implementation of the
 /// [`VtpmInterface`]
 pub fn vtpm_init(manufacture: bool) -> Result<(), SvsmReqError> {
+    let counter_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
+    let extend_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x02].to_vec();
+
     let mut vtpm = VTPM.lock();
     if vtpm.is_powered_on() {
         return Ok(());
     }
     vtpm.init(manufacture)?;
+    // 手动解引用
+    let vvtpm: &mut Vtpm = &mut *vtpm;
+    // 开机
+    let _ = tss::startup(vvtpm);
+    // pre getcap
+    let mut property = [0x01, 0x00, 0x00, 0x00].to_vec();
+    let mut is_defined_extend: Option<bool> = Some(false);
+    let mut is_defined_counter: Option<bool> = Some(false);
+    
+    let mut cap_stream = tss::getcap(vvtpm, &property)?;
+    parse_getcap(&mut cap_stream, &mut is_defined_extend, &extend_index, &mut is_defined_counter, &counter_index);
+    log::info!("is_define status is: counter:{},extend:{}", is_defined_counter.unwrap(), is_defined_extend.unwrap());
+
+    // nvdefine(counter)
+    if is_defined_counter == Some(false){
+        let _ = tss::nvdefine(vvtpm, &counter_index, &"counter");
+    }
+    // nvdefine(extend)
+    if is_defined_extend == Some(false){
+        let _ = tss::nvdefine(vvtpm, &extend_index, &"extend");
+    }
+
+    // post getcap
+    // property = [0x01, 0x00, 0x00, 0x00].to_vec();
+    // cap_stream = tss::getcap(vvtpm, &property)?;
+    // parse_getcap(&mut cap_stream, &mut None, &extend_index, &mut None, &counter_index);
+
+    // nv_extend & nv_increment
+    let extend_stream = tss::nvextend(vvtpm, &extend_index)?;
+    let increment_stream = tss::nvincrement(vvtpm, &counter_index)?;
     Ok(())
 }
 
@@ -117,4 +152,37 @@ pub fn vtpm_get_locked<'a>() -> LockGuard<'a, Vtpm> {
 pub fn vtpm_get_manifest() -> Result<Vec<u8>, SvsmReqError> {
     let mut vtpm = VTPM.lock();
     vtpm.get_ekpub()
+}
+
+fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined_extend :&mut Option<bool>, extend_index: &Vec<u8>, is_defined_counter :&mut Option<bool>, counter_index: &Vec<u8>){
+    const BOUND:usize = 19;
+
+    if cap_stream.len() < BOUND{
+        log::info!("[getcap] insufficient getcap resp length, error!");
+        return
+    }else if cap_stream.len() == BOUND{
+        log::info!("[getcap] no payload!");
+        return
+    }
+
+    let index_count = cap_stream[15..BOUND].to_vec();
+    let num = u32::from_be_bytes(index_count.try_into().unwrap());
+    let rest = cap_stream.split_off(BOUND);
+    log::info!("[getcap]nv_index_num is {}, data area is {:02x?}" , num, rest);
+    for chunk in rest.chunks_exact(4) {
+        let old_index: Vec<u8> = chunk.try_into().unwrap();
+        if old_index == *extend_index {
+            log::info!("[getcap]extend_index has been existed: 0x{:02x?}, break!", old_index);
+            if is_defined_extend.is_some() {
+               *is_defined_extend = Some(true);
+            }
+            continue;
+        }else if old_index == *counter_index {
+            log::info!("[getcap]counter_index has been existed: 0x{:02x?}, break!", old_index);
+            if is_defined_counter.is_some() {
+               *is_defined_counter = Some(true);
+            }
+            continue;    
+        }
+    }
 }

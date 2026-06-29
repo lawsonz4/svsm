@@ -12,7 +12,7 @@
 mod wrapper;
 
 pub mod ek_templates;
-mod tss;
+pub mod tss;
 
 extern crate alloc;
 

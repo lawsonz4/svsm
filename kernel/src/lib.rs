@@ -66,3 +66,14 @@ pub mod testing;
 // Utilities for test configurations.
 #[cfg(test)]
 pub mod testutils;
+
+#[cfg(test)]
+mod testvtpm {
+    use crate::vtpm::tcgtpm::TcgTpm;
+    use crate::vtpm::tcgtpm;
+    #[test]
+    fn test_nv() {
+        let mut tpm = TcgTpm::new();
+        tcgtpm::nvdefine(&tpm);
+    }
+}

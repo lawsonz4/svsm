@@ -21,3 +21,4 @@ testkeys/
 **/fuzz/corpus
 **/fuzz/artifacts
 **/fuzz/coverage
+.vscode/

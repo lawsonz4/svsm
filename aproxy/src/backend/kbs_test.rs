@@ -34,6 +34,7 @@ impl AttestationProtocol for KbsProtocol {
             tee: request.tee,
             extra_params: Value::String("".to_string()), // unused.
         };
+        println!("req is {}", serde_json::to_string(&req).unwrap());
 
         // Fetch challenge containing a nonce from the KBS /auth endpoint.
         let http_resp = http
@@ -46,6 +47,7 @@ impl AttestationProtocol for KbsProtocol {
         let text = http_resp
             .text()
             .context("unable to convert KBS /auth response to text")?;
+        println!("resp of /auth req is {}", text);
 
         let challenge: Challenge =
             serde_json::from_str(&text).context("unable to convert KBS /auth response to JSON")?;
