@@ -22,3 +22,4 @@ testkeys/
 **/fuzz/artifacts
 **/fuzz/coverage
 .vscode/
+Cargo.lock

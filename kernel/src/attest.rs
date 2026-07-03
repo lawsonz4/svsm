@@ -68,6 +68,8 @@ impl TryFrom<Tee> for AttestationDriver<'_> {
     }
 }
 
+const NEGO_PREFIX : &str = "[svsm attest.rs AttestationDriver.negotiation()]";
+
 impl AttestationDriver<'_> {
     /// Attest SVSM's launch state by communicating with the attestation proxy.
     pub fn attest(&mut self) -> Result<Vec<u8>, SvsmError> {
@@ -81,9 +83,10 @@ impl AttestationDriver<'_> {
     /// mechanism).
     fn negotiation(&mut self) -> Result<NegotiationResponse, AttestationError> {
         let request = NegotiationRequest {
-            version: "0.1.0".to_string(), // Only version supported at present.
+            version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
+        log::info!("{} tee field of negotiation request is {:?}", NEGO_PREFIX, self.tee);
 
         self.write(request)?;
         let payload = self.read()?;

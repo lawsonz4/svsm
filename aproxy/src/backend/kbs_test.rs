@@ -26,11 +26,11 @@ impl AttestationProtocol for KbsProtocol {
         http: &mut HttpClient,
         request: NegotiationRequest,
     ) -> anyhow::Result<NegotiationResponse> {
-        if request.version != *"0.1.0" {
+        if request.version != *"0.4.0" {
             return Err(anyhow!("invalid request version"));
         }
         let req = Request {
-            version: "0.1.0".to_string(), // unused.
+            version: "0.4.0".to_string(), // unused.
             tee: request.tee,
             extra_params: Value::String("".to_string()), // unused.
         };
@@ -73,21 +73,30 @@ impl AttestationProtocol for KbsProtocol {
         http: &mut HttpClient,
         request: AttestationRequest,
     ) -> anyhow::Result<AttestationResponse> {
+
+        let bytes: Vec<u8> = vec![72, 101, 108, 108, 111]; // "Hello"
+        let fake_evidence = Value::Array(
+            bytes.into_iter().map(|b| Value::Number(b.into())).collect()
+        );
+
         // Create a KBS attestation object from the TEE evidence and key.
         let attestation = Attestation {
-            tee_pubkey: match request.key {
-                AttestationKey::EC {
-                    crv,
-                    x_b64url,
-                    y_b64url,
-                } => TeePubKey::EC {
-                    crv,
-                    alg: "EC".to_string(),
-                    x: x_b64url,
-                    y: y_b64url,
+            init_data: None,
+            runtime_data: RuntimeData {
+                nonce: String::from("fakenonece-1234567890"),
+                tee_pubkey: match request.key {
+                    AttestationKey::EC { crv, x_b64url, y_b64url } => TeePubKey::EC {
+                        crv,
+                        alg: "EC".to_string(),
+                        x: x_b64url,
+                        y: y_b64url,
+                    },
                 },
             },
-            tee_evidence: Value::String(request.evidence),
+            tee_evidence: CompositeEvidence {
+                primary_evidence: fake_evidence,
+                additional_evidence: String::from("none"),
+            },
         };
 
         // Attest TEE evidence at KBS /attest endpoint.

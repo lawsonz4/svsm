@@ -72,7 +72,7 @@ gdbstub_arch = { version = "0.2.4" }
 igvm = { version = "0.3.4", default-features = false }
 igvm_defs = { version = "0.3.4", default-features = false }
 intrusive-collections = "0.9.6"
-kbs-types = { version = "0.10.0", default-features = false }
+kbs-types = { version = "0.15.0", default-features = false }
 libfuzzer-sys = "0.4"
 log = "0.4.17"
 p384 = { version = "0.13.0" }
