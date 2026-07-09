@@ -5,9 +5,12 @@
 // Author: Stefano Garzarella <sgarzare@redhat.com>
 // Author: Tyler Fanelli <tfanelli@redhat.com>
 
+#![cfg(feature = "enable_v1_file")]
+
 use super::*;
 use anyhow::Context;
-use kbs_types::*;
+use kbs10::*;
+use kbs15::Tee as TeeV15;
 use reqwest::StatusCode;
 use serde_json::Value;
 
@@ -26,15 +29,22 @@ impl AttestationProtocol for KbsProtocol {
         http: &mut HttpClient,
         request: NegotiationRequest,
     ) -> anyhow::Result<NegotiationResponse> {
-        if request.version != *"0.4.0" {
+        if request.version != *"0.1.0" {
             return Err(anyhow!("invalid request version"));
         }
+
+        // v15数据结构转v10
+        let tee_v10 = match request.tee {
+            TeeV15::Snp => Tee::Snp,
+            other => panic!("unsupported tee variant from v0.10: {:?}", other),
+        };
+
         let req = Request {
-            version: "0.4.0".to_string(), // unused.
-            tee: request.tee,
+            version: "0.1.0".to_string(), // unused.
+            tee: tee_v10,
             extra_params: Value::String("".to_string()), // unused.
         };
-        println!("req is {}", serde_json::to_string(&req).unwrap());
+        print!("[proxy client]auth req in text is {:?}", &req);
 
         // Fetch challenge containing a nonce from the KBS /auth endpoint.
         let http_resp = http
@@ -47,7 +57,8 @@ impl AttestationProtocol for KbsProtocol {
         let text = http_resp
             .text()
             .context("unable to convert KBS /auth response to text")?;
-        println!("resp of /auth req is {}", text);
+
+        print!("auth resp in text is {}", &text);
 
         let challenge: Challenge =
             serde_json::from_str(&text).context("unable to convert KBS /auth response to JSON")?;
@@ -73,30 +84,21 @@ impl AttestationProtocol for KbsProtocol {
         http: &mut HttpClient,
         request: AttestationRequest,
     ) -> anyhow::Result<AttestationResponse> {
-
-        let bytes: Vec<u8> = vec![72, 101, 108, 108, 111]; // "Hello"
-        let fake_evidence = Value::Array(
-            bytes.into_iter().map(|b| Value::Number(b.into())).collect()
-        );
-
         // Create a KBS attestation object from the TEE evidence and key.
         let attestation = Attestation {
-            init_data: None,
-            runtime_data: RuntimeData {
-                nonce: String::from("fakenonece-1234567890"),
-                tee_pubkey: match request.key {
-                    AttestationKey::EC { crv, x_b64url, y_b64url } => TeePubKey::EC {
-                        crv,
-                        alg: "EC".to_string(),
-                        x: x_b64url,
-                        y: y_b64url,
-                    },
+            tee_pubkey: match request.key {
+                AttestationKey::EC {
+                    crv,
+                    x_b64url,
+                    y_b64url,
+                } => TeePubKey::EC {
+                    crv,
+                    alg: "EC".to_string(),
+                    x: x_b64url,
+                    y: y_b64url,
                 },
             },
-            tee_evidence: CompositeEvidence {
-                primary_evidence: fake_evidence,
-                additional_evidence: String::from("none"),
-            },
+            tee_evidence: Value::String(request.evidence),
         };
 
         // Attest TEE evidence at KBS /attest endpoint.
@@ -121,11 +123,18 @@ impl AttestationProtocol for KbsProtocol {
 
         // Successful attestation. Fetch the secret (which should be stored as "svsm_secret" within
         // the KBS's RVPS.
+        // let http_resp = http
+        //     .cli
+        //     .post(format!("{}/kbs/v0/svsm_secret", http.url))
+        //     .send()
+        //     .context("unable to POST to KBS /attest endpoint")?;
+
         let http_resp = http
             .cli
-            .post(format!("{}/kbs/v0/svsm_secret", http.url))
+            .post(format!("{}/kbs/v0/rvps/cvm0", http.url))
             .send()
             .context("unable to POST to KBS /attest endpoint")?;
+        
 
         // Unsuccessful attempt at retrieving secret.
         if http_resp.status() != StatusCode::OK {

@@ -39,8 +39,10 @@ fn negotiation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
             .context("unable to deserialize negotiation request from JSON")?
     };
 
+    println!("[aproxy-server] negotiation request struct is {:?}", &request);
     // Gather negotiation parameters from the attestation server.
     let response: NegotiationResponse = http.negotiation(request)?;
+    println!("[aproxy-server] negotiation response struct is {:?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -57,9 +59,11 @@ fn attestation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
         serde_json::from_slice(&payload)
             .context("unable to deserialize attestation request from JSON")?
     };
-
+    
+    println!("[aproxy-server] attestation request struct is {:?}", &request);
     // Attest the TEE evidence with the server.
     let response = http.attestation(request)?;
+    println!("[aproxy-server] attestation response struct is {:?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -86,6 +90,7 @@ fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
         .read_exact(&mut bytes)
         .context("unable to read request buffer from socket")?;
 
+    println!("[aproxy-rw-proxy] read from svsm: {:?}[len={}]", &bytes, &len);
     Ok(bytes)
 }
 
@@ -94,6 +99,7 @@ fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
 fn proxy_write(stream: &mut UnixStream, buf: impl Serialize) -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(&buf).context("unable to convert buffer to JSON bytes")?;
     let len = bytes.len().to_ne_bytes();
+    println!("[aproxy-rw-proxy] write back to svsm: {:?}[len={:?}]", &bytes, &len);
 
     stream
         .write_all(&len)

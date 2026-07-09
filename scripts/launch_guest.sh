@@ -19,7 +19,7 @@ fi
 
 C_BIT_POS=$("$C_BIT_UTIL" || true)
 COM1_SERIAL="-serial stdio" # console
-COM2_SERIAL="-serial null"  # debug
+COM2_SERIAL="-serial file:/home/lawson/data/root/sev-CCC/trustee/svsm.log"  # debug
 COM3_SERIAL="-serial null"  # used by hyper-v
 COM4_SERIAL="-serial null"  # used by in-SVSM tests
 QEMU_EXIT_DEVICE=""
@@ -187,7 +187,7 @@ $SUDO_CMD \
     $SNP_GUEST \
     -smp 4 \
     -no-reboot \
-    -netdev user,id=vmnic,hostfwd=tcp::4444-:22,hostfwd=tcp::50000-:8080 \
+    -netdev user,id=vmnic,hostfwd=tcp::4444-:22 \
     -device e1000,netdev=vmnic,romfile= \
     $IMAGE_DISK \
     -nographic \

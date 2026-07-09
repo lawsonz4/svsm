@@ -5,7 +5,10 @@ edition = "2021"
 
 [target.'cfg(all(target_os = "linux"))'.dependencies]
 reqwest = { version = "0.12.9", default-features = false, features = ["blocking", "cookies", "json"] }
-kbs-types = "0.15.0"
+# kbs-types = "0.15.0"
+kbs15 = { package = "kbs-types", version = "0.15.0" }
+# 旧版 0.10.0，别名 kbs10
+kbs10 = { package = "kbs-types", version = "0.10.0" }
 
 [dependencies]
 anyhow = "1.0.93"

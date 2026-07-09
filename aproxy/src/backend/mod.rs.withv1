@@ -9,6 +9,7 @@ mod kbs_v1;
 mod kbs_trustee;
 
 use anyhow::{anyhow, Context};
+use kbs_v1::KbsProtocol;
 use kbs_trustee::TrusteeProtocol;
 use libaproxy::*;
 use reqwest::{blocking::Client, cookie::Jar};
@@ -36,6 +37,9 @@ impl HttpClient {
         // Depending on the underlying protocol of the attestation server, gather negotiation
         // parameters accordingly.
         match req.version.as_str() {
+            "0.1.0" => {
+                self.protocol = Protocol::KbsTest(KbsProtocol);
+            }
             "0.4.0" => {
                 self.protocol = Protocol::Trustee(TrusteeProtocol);
             }
@@ -43,6 +47,7 @@ impl HttpClient {
         }
 
         match self.protocol {
+            Protocol::KbsTest(mut kbs) => kbs.negotiation(self, req),
             Protocol::Trustee(mut trustee) => trustee.negotiation(self, req),
             Protocol::Empty => return Err(anyhow!("protocol not initialized")),
         }
@@ -50,6 +55,7 @@ impl HttpClient {
 
     pub fn attestation(&mut self, req: AttestationRequest) -> anyhow::Result<AttestationResponse> {
         match self.protocol {
+            Protocol::KbsTest(mut kbs) => kbs.attestation(self, req),
             Protocol::Trustee(mut trustee) => trustee.attestation(self, req),
             Protocol::Empty => return Err(anyhow!("protocol not initialized")),
         }
@@ -60,6 +66,7 @@ impl HttpClient {
 #[derive(Clone, Copy, Debug)]
 pub enum Protocol {
     Empty,
+    KbsTest(KbsProtocol),
     Trustee(TrusteeProtocol),
 }
 
@@ -68,6 +75,7 @@ impl FromStr for Protocol {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match &s.to_lowercase()[..] {
+            "kbs-test" => Ok(Self::KbsTest(KbsProtocol)),
             "trustee" => Ok(Self::Trustee(TrusteeProtocol)),
             _ => Err(anyhow!("invalid backend attestation protocol selected")),
         }

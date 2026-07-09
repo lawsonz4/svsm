@@ -47,6 +47,7 @@ fn main() -> anyhow::Result<()> {
         match stream {
             Ok(mut stream) => {
                 let mut http_client = backend::HttpClient::new(args.url.clone(), args.backend)?;
+                println!("[aproxy-server] client is {:?}", &http_client);
                 attest::attest(&mut stream, &mut http_client)?;
             }
             Err(_) => {

@@ -37,6 +37,7 @@ use libaproxy::*;
 use serde::Serialize;
 use sha2::{Digest, Sha512};
 use zerocopy::{FromBytes, IntoBytes};
+use aes_kw::{Kek};
 
 /// The attestation driver that communicates with the proxy via some communication channel (serial
 /// port, virtio-vsock, etc...).
@@ -68,7 +69,6 @@ impl TryFrom<Tee> for AttestationDriver<'_> {
     }
 }
 
-const NEGO_PREFIX : &str = "[svsm attest.rs AttestationDriver.negotiation()]";
 
 impl AttestationDriver<'_> {
     /// Attest SVSM's launch state by communicating with the attestation proxy.
@@ -83,10 +83,11 @@ impl AttestationDriver<'_> {
     /// mechanism).
     fn negotiation(&mut self) -> Result<NegotiationResponse, AttestationError> {
         let request = NegotiationRequest {
+            // todo 以后改回0.4.0，现在调回0.1.0目的是启动一个cvm
             version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
-        log::info!("{} tee field of negotiation request is {:?}", NEGO_PREFIX, self.tee);
+        log::info!("[svsm-driver] tee field of negotiation request is {:?}", self.tee);
 
         self.write(request)?;
         let payload = self.read()?;
@@ -107,14 +108,21 @@ impl AttestationDriver<'_> {
             .to_tpms_ecc_point(&curve.curve_ops().map_err(AttestationError::Crypto)?)
             .map_err(AttestationError::Crypto)?;
 
-        let evidence = evidence(&self.tee, hash(n, &pub_key)?)?;
+        let evidence = evidence(&self.tee, hash(&n, &pub_key)?)?;
 
+        // 先取出vec第1项，提取base64 nonce字符串
+        let nonce_str = match &n.params[1] {
+            NegotiationParam::Base64StdBytes(raw_nonce) => raw_nonce.clone(),
+            _ => return Err(AttestationError::AttestationDeserialize),
+        };
         let req = AttestationRequest {
+            nonce: nonce_str,
             evidence: BASE64_URL_SAFE.encode(evidence),
             key: (self.ecc.pub_key().get_curve_id(), &pub_key)
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
+        log::info!("[svsm driver] attestation req is {:?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
@@ -126,17 +134,24 @@ impl AttestationDriver<'_> {
             return Err(AttestationError::Failed);
         }
 
-        let Some(ak) = response.pub_key else {
-            return Err(AttestationError::PublicKeyMissing)?;
-        };
+        // let Some(ak) = response.pub_key else {
+        //     return Err(AttestationError::PublicKeyMissing)?;
+        // };
 
-        let pub_key: TpmsEccPoint<'static> = ak.try_into().map_err(AttestationError::Crypto)?;
+        // let pub_key: TpmsEccPoint<'static> = ak.try_into().map_err(AttestationError::Crypto)?;
 
-        let Some(ciphertext) = response.secret else {
-            return Err(AttestationError::SecretMissing);
-        };
+        // let Some(ciphertext) = response.secret else {
+        //     return Err(AttestationError::SecretMissing);
+        // };
 
-        self.decrypt(ciphertext, pub_key)
+        // TODO convert jwe structure of resp
+        log::info!("[svsm driver] attestation resp is {:?}", &response);
+
+        let unwrapped_key = kek.unwrap_vec(&wrapped_key)?;
+
+        // self.decrypt(ciphertext, pub_key)
+        let stub: Vec<u8> = Vec::new();
+        Ok(stub)
     }
 
     /// Decrypt a secret from the attestation server with the TEE private key.
@@ -177,6 +192,7 @@ impl AttestationDriver<'_> {
 
             usize::from_ne_bytes(bytes)
         };
+        log::info!("[svsm-driver] read {} bytes", &len);
 
         let mut buf: Vec<u8> = vec_sized(len).or(Err(AttestationError::VecAlloc))?;
 
@@ -190,6 +206,7 @@ impl AttestationDriver<'_> {
     /// Write attestation data over the serial port.
     fn write(&mut self, param: impl Serialize) -> Result<(), AttestationError> {
         let bytes = serde_json::to_vec(&param).or(Err(AttestationError::NegotiationSerialize))?;
+        log::info!("[svsm-driver] write {} bytes", bytes.len());
 
         // The receiving party is unaware of how many bytes to read from the port. Write an 8-byte
         // header indicating the length of the buffer before writing the buffer itself.
@@ -310,7 +327,7 @@ fn evidence(tee: &Tee, hash: Vec<u8>) -> Result<Vec<u8>, AttestationError> {
 /// Hash the negotiation parameters from the attestation server for inclusion in the
 /// attestation evidence.
 fn hash(
-    n: NegotiationResponse,
+    n: &NegotiationResponse,
     pub_key: &TpmsEccPoint<'static>,
 ) -> Result<Vec<u8>, AttestationError> {
     let mut sha = Sha512::new();
