@@ -27,7 +27,7 @@ syscall.workspace = true
 
 aes = { workspace = true, optional = true }
 # aes-kw = { version = "0.2.1", optional = true}
-aes-kw = { version = "0.3.1", features = ["zeroize"], optional = true }
+aes-kw = { workspace=true, features = ["zeroize"], optional = true }
 aes-gcm = { workspace = true, features = ["aes", "alloc"] }
 base64 = { workspace = true, optional = true, features = ["alloc"] }
 bitfield-struct.workspace = true
