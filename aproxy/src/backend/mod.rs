@@ -5,7 +5,6 @@
 // Author: Stefano Garzarella <sgarzare@redhat.com>
 // Author: Tyler Fanelli <tfanelli@redhat.com>
 
-mod kbs_v1;
 mod kbs_trustee;
 
 use anyhow::{anyhow, Context};

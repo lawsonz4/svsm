@@ -115,7 +115,7 @@ pub fn vtpm_init(manufacture: bool) -> Result<(), SvsmReqError> {
     // 开机
     let _ = tss::startup(vvtpm);
     // pre getcap
-    let mut property = [0x01, 0x00, 0x00, 0x00].to_vec();
+    let  property = [0x01, 0x00, 0x00, 0x00].to_vec();
     let mut is_defined_extend: Option<bool> = Some(false);
     let mut is_defined_counter: Option<bool> = Some(false);
     
@@ -138,8 +138,8 @@ pub fn vtpm_init(manufacture: bool) -> Result<(), SvsmReqError> {
     // parse_getcap(&mut cap_stream, &mut None, &extend_index, &mut None, &counter_index);
 
     // nv_extend & nv_increment
-    let extend_stream = tss::nvextend(vvtpm, &extend_index)?;
-    let increment_stream = tss::nvincrement(vvtpm, &counter_index)?;
+    _ = tss::nvextend(vvtpm, &extend_index)?;
+    _ = tss::nvincrement(vvtpm, &counter_index)?;
     Ok(())
 }
 

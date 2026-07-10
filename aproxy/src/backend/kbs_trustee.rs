@@ -10,6 +10,11 @@ use anyhow::Context;
 use kbs15::*;
 use reqwest::StatusCode;
 use serde_json::Value;
+use libaproxy::*;
+use base64::{
+    prelude::{BASE64_URL_SAFE_NO_PAD},
+    Engine,
+};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrusteeProtocol;
@@ -83,18 +88,7 @@ impl AttestationProtocol for TrusteeProtocol {
             init_data: None,
             runtime_data: RuntimeData {
                 nonce: request.nonce,
-                tee_pubkey: match request.key {
-                    AttestationKey::EC {
-                        crv,
-                        x_b64url,
-                        y_b64url,
-                    } => TeePubKey::EC {
-                        crv,
-                        alg: "EC".to_string(),
-                        x: x_b64url,
-                        y: y_b64url,
-                    },
-                },
+                tee_pubkey: request.key.into(),
             },
             tee_evidence: CompositeEvidence {
                 primary_evidence: Value::String(request.evidence),
@@ -133,12 +127,13 @@ impl AttestationProtocol for TrusteeProtocol {
         if http_resp.status() != StatusCode::OK {
             return Ok(AttestationResponse {
                 success: false,
-                jwe: vec![],
+                secret: None,
+                decryption: None,
             });
         }
 
-        let jwe = http_resp.bytes().unwrap();
-        println!("[aproxy-protocol] resp bytes of /attest body is {:?}", &jwe);
+        // let jwe = http_resp.bytes().unwrap();
+        // println!("[aproxy-protocol] resp bytes of /attest body is {:?}", &jwe);
 
 
         let http_resp = http
@@ -149,6 +144,40 @@ impl AttestationProtocol for TrusteeProtocol {
 
         println!("[aproxy-protocol] lawson/secret/cvm0 resp header is {:?}", &http_resp);
         // println!("[aproxy-protocol] lawson/secret/cvm0 resp header is {:?}", &http_resp.text());
+
+        if http_resp.status() != StatusCode::OK {
+            return Ok(AttestationResponse {
+                success: false,
+                secret: None,
+                decryption: None,
+            });
+        }
+
+        //读body
+        let body_bytes = http_resp
+            .bytes()
+            .context("unable to read KBS /resource response")?;
+        // 反序列化
+        let resp: Response = serde_json::from_slice(&body_bytes).unwrap();
+        println!("[svsm driver] attestation resp is {:?}", &resp);
+
+        let epk = unwrap_epk(&resp)?;
+        let aad = resp
+            .protected
+            .generate_aad()
+            .context("unable to generate AAD")?;
+
+        Ok(AttestationResponse {
+            success: true,
+            secret: Some(resp.ciphertext),
+            decryption: Some(AesGcmData {
+                epk,
+                wrapped_cek: resp.encrypted_key,
+                aad,
+                iv: resp.iv,
+                tag: resp.tag,
+            }),
+        })
 
         // let http_resp = http
         //     .cli
@@ -211,9 +240,39 @@ impl AttestationProtocol for TrusteeProtocol {
         //     }
         // };
 
-        Ok(AttestationResponse {
-            success: true,
-            jwe: http_resp.bytes().unwrap().to_vec(),
-        })
     }
+}
+
+fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
+    let epk = resp
+        .protected
+        .other_fields
+        .get("epk")
+        .context("epk not found")?;
+
+    let _crv = epk
+        .get("crv")
+        .context("EC crv value not found")?
+        .as_str()
+        .context("unable to convert EC crv value to string")?;
+
+    let x = BASE64_URL_SAFE_NO_PAD
+        .decode(
+            epk.get("x")
+                .context("EC x value not found")?
+                .as_str()
+                .context("unable to convert EC x value to string")?,
+        )
+        .context("unable to decode EC x value from base64")?;
+
+    let y = BASE64_URL_SAFE_NO_PAD
+        .decode(
+            epk.get("y")
+                .context("EC y value not found")?
+                .as_str()
+                .context("unable to convert EC y value to string")?,
+        )
+        .context("unable to decode EC y value from base64")?;
+
+    Ok(EcP256PublicKey { x, y })
 }

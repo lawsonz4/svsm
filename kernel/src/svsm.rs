@@ -361,6 +361,7 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         {
             let mut proxy = AttestationDriver::try_from(Tee::Snp).unwrap();
             let secret = proxy.attest().expect("Remote attestation failed");
+            log::info!("[inject] secret is {:?}", secret);
 
             let mut xts_key = [0; 64];
             xts_key[..64].copy_from_slice(&secret);

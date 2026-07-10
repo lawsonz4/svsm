@@ -25,10 +25,9 @@ libaproxy = { workspace = true, optional = true }
 elf.workspace = true
 syscall.workspace = true
 
-aes = { workspace = true, optional = true }
-# aes-kw = { version = "0.2.1", optional = true}
-aes-kw = { workspace=true, features = ["zeroize"], optional = true }
+aes-kw = { workspace=true, optional = true }
 aes-gcm = { workspace = true, features = ["aes", "alloc"] }
+concat-kdf = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true, features = ["alloc"] }
 bitfield-struct.workspace = true
 bitflags.workspace = true
@@ -70,6 +69,7 @@ xts-mode = { version = "=0.5.1", default-features = false }
 serde = { workspace = true, features = ["alloc", "derive"] }
 serde_json = { workspace = true, optional = true, features = ["alloc"] }
 zerocopy = { workspace = true, features = ["alloc", "derive"] }
+# zeroize = { workspace = true, features = ["alloc", "derive"] }
 release.workspace = true
 # Need "force-soft", see https://github.com/RustCrypto/hashes/issues/446
 sha2 = { workspace = true, features = ["force-soft"] }
@@ -90,7 +90,6 @@ test.workspace = true
 
 [features]
 attest = [
-  "dep:aes",
   "dep:aes-kw",
   "dep:base64",
   "dep:cocoon-tpm-crypto",
@@ -99,6 +98,7 @@ attest = [
   "dep:kbs-types",
   "dep:libaproxy",
   "dep:serde_json",
+  "dep:concat-kdf",
 ]
 default = []
 enable-gdb = ["dep:gdbstub", "dep:gdbstub_arch"]

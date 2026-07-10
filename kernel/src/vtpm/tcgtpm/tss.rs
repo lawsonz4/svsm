@@ -85,6 +85,7 @@ fn create_mtauth_ek_cmd(tpmt_public: &[u8]) -> Vec<u8> {
 }
 
 // how to calculate?
+#[warn(dead_code)]
 fn get_hmac_auth() -> Vec<u8>{
     Vec::<u8>::new()
 }
@@ -215,6 +216,7 @@ fn nvextend_cmd(index :&Vec<u8>) -> Vec<u8>{
     return cmd
 }
 
+#[warn(dead_code)]
 fn createprimary_cmd() -> Vec<u8>{
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
     cmd.extend_from_slice(&[

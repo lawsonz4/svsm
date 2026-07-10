@@ -122,8 +122,8 @@ pub fn uefi_mm_protocol_init() -> Result<(), SvsmReqError> {
     Ok(())
 }
 
-#[derive(IntoBytes, Immutable)]
 #[bitfield(u32)]
+#[derive(IntoBytes, Immutable)]
 pub struct UefiMmManifestFlags {
     // non-volatile uefi variables are written to persistent storage
     pub persistent_nv_vars: bool,
@@ -138,7 +138,8 @@ pub struct UefiMmManifestFlags {
     _reserved: u32,
 }
 
-#[allow(dead_code)]
+// #[allow(dead_code)]
+#[repr(C, packed)]
 #[derive(IntoBytes, Immutable)]
 struct UefiMmManifest {
     pub version: u32,
