@@ -80,17 +80,18 @@ impl AttestationDriver<'_> {
     /// that should be included in attestation evidence (e.g. through SEV-SNP's REPORT_DATA
     /// mechanism).
     fn negotiation(&mut self) -> Result<NegotiationResponse, AttestationError> {
-        let request = NegotiationRequest {
-            // todo 以后改回0.4.0，现在调回0.1.0目的是启动一个cvm
+        let req = NegotiationRequest {
             version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
-        log::info!("[svsm-driver] tee field of negotiation request is {:?}", self.tee);
+        log::info!("[svsm-driver] NegotiationRequest is\n{:#?}", &req);
 
-        self.write(request)?;
+        self.write(req)?;
         let payload = self.read()?;
 
-        serde_json::from_slice(&payload).or(Err(AttestationError::NegotiationDeserialize))
+        let resp = serde_json::from_slice(&payload).or(Err(AttestationError::NegotiationDeserialize));
+        log::info!("[svsm-driver] NegotiationResponse is\n{:#?}", &resp);
+        resp
     }
 
     /// Send an attestation request to the proxy. Proxy should reply with attestation response
@@ -120,12 +121,13 @@ impl AttestationDriver<'_> {
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
-        log::info!("[svsm driver] attestation req is {:?}", &req);
+        log::info!("[svsm driver] AttestationRequest is\n{:?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
         let response: AttestationResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
+        log::info!("[svsm driver] AttestationResponse (before decryption) is\n{:?}", &response);
 
         if !response.success {
             return Err(AttestationError::Failed);
@@ -140,7 +142,7 @@ impl AttestationDriver<'_> {
         };
 
         self.decrypt(&mut secret, decryption)?;
-
+        log::info!("[svsm driver] The final secret got from the kbs is\n{:?}", &secret);
         Ok(secret)
     }
 
@@ -202,7 +204,7 @@ impl AttestationDriver<'_> {
 
             usize::from_ne_bytes(bytes)
         };
-        log::info!("[svsm-driver] read {} bytes", &len);
+        log::info!("[svsm-driver] read {} bytes from aproxy", &len);
 
         let mut buf: Vec<u8> = vec_sized(len).or(Err(AttestationError::VecAlloc))?;
 
@@ -216,7 +218,7 @@ impl AttestationDriver<'_> {
     /// Write attestation data over the serial port.
     fn write(&mut self, param: impl Serialize) -> Result<(), AttestationError> {
         let bytes = serde_json::to_vec(&param).or(Err(AttestationError::NegotiationSerialize))?;
-        log::info!("[svsm-driver] write {} bytes", bytes.len());
+        log::info!("[svsm-driver] write {} bytes to aproxy", bytes.len());
 
         // The receiving party is unaware of how many bytes to read from the port. Write an 8-byte
         // header indicating the length of the buffer before writing the buffer itself.

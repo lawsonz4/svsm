@@ -288,15 +288,18 @@ pub fn checked_send<T: TcgTpmSimulatorInterface>(
     } else {
         command_size = u32::from_be_bytes(cmd[2..6].try_into().unwrap()) as usize;
     }
-    log::info!("[checked_send]sending cmd is {:02x?}", &cmd);
+    log::info!("[vtpm-stream] sending cmd is {:02x?}", &cmd);
     let response = vtpm
         .send_tpm_command(&cmd[..command_size], 0)
         .map_err(|_| SvsmVTpmError::ReqError(SvsmReqError::invalid_request()))?;
+    log::info!("[vtpm-stream] received resp is: {:02x?}", response);
+
     let rc = tpm_cmd_rc(&response);
     if rc != TPM_RC_SUCCESS {
-        log::info!("tpm error response is: {:02x?}", response);
+        log::info!("[vtpm-stream] execute this cmd success");
         return Err(SvsmVTpmError::CommandError(rc));
     }
+    log::info!("[vtpm-stream] execute this cmd fail");
     Ok(response)
 }
 
@@ -333,7 +336,7 @@ pub fn nvdefine<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("tpm2_nvdefine response is: {:02x?}", resp);
+    log::info!("[tpm2_nvdefine] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -344,7 +347,7 @@ pub fn start_authsession<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, /*set_len=*/ true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("tpm startauthsession response is: {:02x?}", resp);
+    log::info!("[tpm2_startauthsession] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -356,7 +359,7 @@ pub fn startup<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("[startup]tpm2_startup response is: {:02x?}", resp);
+    log::info!("[tpm2_startup] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -367,7 +370,7 @@ pub fn getcap<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("[getcap]tpm2_getcap response is: {:02x?}", resp);
+    log::info!("[tpm2_getcap] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -376,7 +379,7 @@ pub fn nvextend<T: TcgTpmSimulatorInterface>(
 ) -> Result<Vec<u8>, SvsmVTpmError> {
     let mut cmd = nvextend_cmd(&index);
     let resp = checked_send(vtpm, &mut cmd, true)?;
-    log::info!("[nvextend]tpm2_nvextend response is: {:02x?}", resp);
+    log::info!("[tpm2_nvextend] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -385,6 +388,6 @@ pub fn nvincrement<T: TcgTpmSimulatorInterface>(
 ) -> Result<Vec<u8>, SvsmVTpmError> {
     let mut cmd = nvincrement_cmd(&index);
     let resp = checked_send(vtpm, &mut cmd, true)?;
-    log::info!("[nvincrement]tpm2_increment response is: {:02x?}", resp);
+    log::info!("[tpm2_increment] response is: {:02x?}", resp);
     Ok(resp)
 }

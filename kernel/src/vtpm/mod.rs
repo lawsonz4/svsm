@@ -168,17 +168,17 @@ fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined_extend :&mut Option<bool>,
     let index_count = cap_stream[15..BOUND].to_vec();
     let num = u32::from_be_bytes(index_count.try_into().unwrap());
     let rest = cap_stream.split_off(BOUND);
-    log::info!("[getcap]nv_index_num is {}, data area is {:02x?}" , num, rest);
+    log::info!("[parse_getcap]nv_index_num is {}, data area is {:02x?}" , num, rest);
     for chunk in rest.chunks_exact(4) {
         let old_index: Vec<u8> = chunk.try_into().unwrap();
         if old_index == *extend_index {
-            log::info!("[getcap]extend_index has been existed: 0x{:02x?}, break!", old_index);
+            log::info!("[parse_getcap]extend_index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
             if is_defined_extend.is_some() {
                *is_defined_extend = Some(true);
             }
             continue;
         }else if old_index == *counter_index {
-            log::info!("[getcap]counter_index has been existed: 0x{:02x?}, break!", old_index);
+            log::info!("[parse_getcap]counter_index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
             if is_defined_counter.is_some() {
                *is_defined_counter = Some(true);
             }
