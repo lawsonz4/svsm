@@ -84,13 +84,13 @@ impl AttestationDriver<'_> {
             version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
-        log::info!("[svsm-driver] NegotiationRequest is\n{:#?}", &req);
+        log::info!("[svsm-driver] NegotiationRequest is:\n{:#?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
 
         let resp = serde_json::from_slice(&payload).or(Err(AttestationError::NegotiationDeserialize));
-        log::info!("[svsm-driver] NegotiationResponse is\n{:#?}", &resp);
+        log::info!("[svsm-driver] NegotiationResponse is:\n{:#?}", &resp);
         resp
     }
 
@@ -121,13 +121,13 @@ impl AttestationDriver<'_> {
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
-        log::info!("[svsm driver] AttestationRequest is\n{:?}", &req);
+        log::info!("[svsm driver] AttestationRequest is:\n{:?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
         let response: AttestationResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        log::info!("[svsm driver] AttestationResponse (before decryption) is\n{:?}", &response);
+        log::info!("[svsm driver] AttestationResponse (before decryption) is:\n{:?}", &response);
 
         if !response.success {
             return Err(AttestationError::Failed);
@@ -142,7 +142,7 @@ impl AttestationDriver<'_> {
         };
 
         self.decrypt(&mut secret, decryption)?;
-        log::info!("[svsm driver] The final secret got from the kbs is\n{:?}", &secret);
+        log::info!("[svsm driver] The final secret got from the kbs is:\n{:?}", &secret);
         Ok(secret)
     }
 

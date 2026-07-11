@@ -9,7 +9,8 @@ use super::*;
 use anyhow::Context;
 use kbs15::*;
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde::{Deserialize};
+use serde_json::{Value};
 use libaproxy::*;
 use base64::{
     prelude::{BASE64_URL_SAFE_NO_PAD},
@@ -39,8 +40,8 @@ impl AttestationProtocol for TrusteeProtocol {
             tee: request.tee,
             extra_params: Value::String("".to_string()), // unused.
         };
-        println!("[aproxy-protocol] req of /atuth is {}", serde_json::to_string(&req).unwrap());
 
+        println!("[aproxy-protocol] req of /atuth is:\n{}", serde_json::to_string(&req).unwrap());
         // Fetch challenge containing a nonce from the KBS /auth endpoint.
         let http_resp = http
             .cli
@@ -52,7 +53,7 @@ impl AttestationProtocol for TrusteeProtocol {
         let text = http_resp
             .text()
             .context("unable to convert KBS /auth response to text")?;
-        println!("[aproxy-protocol] resp of /auth is {}", text);
+        println!("[aproxy-protocol] resp of /auth is:\n{}", text);
 
         let challenge: Challenge =
             serde_json::from_str(&text).context("unable to convert KBS /auth response to JSON")?;
@@ -78,10 +79,6 @@ impl AttestationProtocol for TrusteeProtocol {
         http: &mut HttpClient,
         request: AttestationRequest,
     ) -> anyhow::Result<AttestationResponse> {
-        // let bytes: Vec<u8> = vec![72, 101, 108, 108, 111]; // "Hello"
-        // let fake_evidence = Value::Array(
-        //     bytes.into_iter().map(|b| Value::Number(b.into())).collect()
-        // );
 
         // Create a KBS attestation object from the TEE evidence and key.
         let attestation = Attestation {
@@ -96,9 +93,9 @@ impl AttestationProtocol for TrusteeProtocol {
             },
         };
 
-        println!("[aproxy-protocol] req struct of /attest is {:?}", &attestation);
+        println!("[aproxy-protocol] req struct of /attest is:\n{:?}", &attestation);
         let attestation_bytes = serde_json::to_vec(&attestation).context("serialize attestation")?;
-        println!("[aproxy-protocol] req bytes of /attest is {:?}", &attestation_bytes);
+        println!("[aproxy-protocol] req bytes of /attest is:\n{:?}", &attestation_bytes);
 
         // Attest TEE evidence at KBS /attest endpoint.
         let http_resp = http
@@ -109,7 +106,6 @@ impl AttestationProtocol for TrusteeProtocol {
             // .json(&attestation)
             .send()
             .context("unable to POST to KBS /attest endpoint")?;
-        // println!("[aproxy-protocol] resp of /attest header is {:?}", http_resp);
 
 
         // The JSON response from the /attest endpoint is basically ignored here. Instead, we check
@@ -124,6 +120,7 @@ impl AttestationProtocol for TrusteeProtocol {
         //     });
         // }
 
+        println!("[aproxy-protocol] resp header of /attest is:\n{:?}", &http_resp);
         if http_resp.status() != StatusCode::OK {
             return Ok(AttestationResponse {
                 success: false,
@@ -131,51 +128,52 @@ impl AttestationProtocol for TrusteeProtocol {
                 decryption: None,
             });
         }
-
-        // let jwe = http_resp.bytes().unwrap();
-        // println!("[aproxy-protocol] resp bytes of /attest body is {:?}", &jwe);
-
-
-        let http_resp = http
-            .cli
-            .get(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
-            .send()
-            .context("unable to POST to KBS /attest endpoint")?;
-
-        println!("[aproxy-protocol] lawson/secret/cvm0 resp header is {:?}", &http_resp);
-        // println!("[aproxy-protocol] lawson/secret/cvm0 resp header is {:?}", &http_resp.text());
-
-        if http_resp.status() != StatusCode::OK {
-            return Ok(AttestationResponse {
-                success: false,
-                secret: None,
-                decryption: None,
-            });
-        }
-
-        //读body
+        //读body(just for debug)
         let body_bytes = http_resp
             .bytes()
             .context("unable to read KBS /resource response")?;
-        // 反序列化
-        let resp: Response = serde_json::from_slice(&body_bytes).unwrap();
-        println!("[svsm driver] attestation resp is {:?}", &resp);
+        println!("[aproxy-protocol] resp bytes of /attest is:\n{:?}", &body_bytes);
+        // 反序列化(just for debug)
+        let resp_struct: TokenResponse = serde_json::from_slice(&body_bytes).unwrap();
+        println!("[aproxy-protocol] resp body of /attest is:\n{:?}", &resp_struct);
 
-        let epk = unwrap_epk(&resp)?;
-        let aad = resp
+        // 请求资源
+        let http_resp = http
+            .cli
+            .get(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
+            .bearer_auth(resp_struct.token) // 也可以不设置，由kbs从cookie和session中读出
+            .send()
+            .context("unable to POST to KBS /attest endpoint")?;
+        println!("[aproxy-protocol] resp header of lawson/secret/cvm0 is:\n{:?}", &http_resp);
+
+        if http_resp.status() != StatusCode::OK {
+            return Ok(AttestationResponse {
+                success: false,
+                secret: None,
+                decryption: None,
+            });
+        }
+        let body_bytes = http_resp
+            .bytes()
+            .context("unable to read KBS /resource response")?;
+        let resp_struct: Response = serde_json::from_slice(&body_bytes).unwrap();
+        println!("[aproxy-protocol] resp body of lawson/secret/cvm0 is:\n{:?}", &resp_struct);
+
+        let epk = unwrap_epk(&resp_struct)?;
+        let aad = resp_struct
             .protected
             .generate_aad()
             .context("unable to generate AAD")?;
 
         Ok(AttestationResponse {
             success: true,
-            secret: Some(resp.ciphertext),
+            secret: Some(resp_struct.ciphertext),
             decryption: Some(AesGcmData {
                 epk,
-                wrapped_cek: resp.encrypted_key,
+                wrapped_cek: resp_struct.encrypted_key,
                 aad,
-                iv: resp.iv,
-                tag: resp.tag,
+                iv: resp_struct.iv,
+                tag: resp_struct.tag,
             }),
         })
 
@@ -275,4 +273,9 @@ fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
         .context("unable to decode EC y value from base64")?;
 
     Ok(EcP256PublicKey { x, y })
+}
+
+#[derive(Deserialize, Debug)]
+struct TokenResponse {
+    pub token: String,
 }
