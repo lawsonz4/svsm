@@ -352,20 +352,24 @@ fn hash(
 
     for p in &n.params {
         match p {
+            #[allow(irrefutable_let_patterns)]
+            NegotiationParam::EcPublicKeyBytes => {
+                sha.update(&*pub_key.x.buffer);
+                sha.update(&*pub_key.y.buffer);
+                log::info!("[runtimedata-hash-debug] pub_key.x is \n:{:?}\npub_key.y is \n:{:?}", &pub_key.x.buffer, &pub_key.y.buffer);
+            }
             NegotiationParam::Base64StdBytes(s) => {
                 let decoded = BASE64_STANDARD
                     .decode(s)
                     .map_err(|_| AttestationError::NegotiationDeserialize)?;
 
-                sha.update(decoded);
-            }
-            #[allow(irrefutable_let_patterns)]
-            NegotiationParam::EcPublicKeyBytes => {
-                sha.update(&*pub_key.x.buffer);
-                sha.update(&*pub_key.y.buffer);
+                sha.update(&decoded);
+                log::info!("[runtimedata-hash-debug] decode nonce is\n:{:?}", &decoded)
             }
         }
     }
+    let digest = sha.finalize();
+    log::info!("[runtimedata-hash-debug] computed runtimedata digest is:\n{:?}", &digest);
 
-    try_to_vec(&sha.finalize()).or(Err(AttestationError::VecAlloc))
+    try_to_vec(&digest).or(Err(AttestationError::VecAlloc))
 }
