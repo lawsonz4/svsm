@@ -157,6 +157,8 @@ fn flushctx_cmd() -> Vec<u8>{
 }
 
 fn nvdefine_cmd(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
+    // 整体结构：header-TPMI_RH_PROVISION-TPM2B_AUTH-TPM2B_NV_PUBLIC
+
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
     // 首部
     cmd.extend_from_slice(&[
@@ -174,33 +176,51 @@ fn nvdefine_cmd(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
     cmd.extend_from_slice(&[
         0x00, 0x00, 0x00, 0x0e, //template size=14 
     ]);
+
+
+    // nv public
     cmd.extend_from_slice(index); // NVIndex
-    if nvtype == "extend"{
-        cmd.extend_from_slice(&[
-            0x00, 0x0b, // nameALG=SHA256
-            // 0x00, 0x04, 0x00, 0x44, // nv attr:authread&authwrite
-            0x00, 0x02, 0x00, 0x42,// nv attr:ownerread&ownerwrite
-            0x00, 0x00, // AuthPolicy
-            0x00, 0x20 // datasize   
+    match nvtype {
+    "extend" => {
+            cmd.extend_from_slice(&[
+                0x00, 0x0b, // nameALG=SHA256
+                0x00, 0x02, 0x00, 0x42,// 属性：extend(0x42's 4) | ownerread | ownerwrite
+                0x00, 0x00, // AuthPolicy
+                0x00, 0x20 // datasize   
         ]);
-    }else if nvtype == "counter"{
+    }
+    "counter" => {
         cmd.extend_from_slice(&[
             0x00, 0x0b, // nameALG=SHA256
-            // 0x00, 0x04, 0x00, 0x44, // nv attr:authread&authwrite
-            0x00, 0x02, 0x00, 0x12,// nv attr:ownerread&ownerwrite
+            0x00, 0x04, 0x00, 0x14, // 属性：counter(0x12's 1) | authread | authwrite
             0x00, 0x00, // AuthPolicy
             0x00, 0x08 // datasize   
         ]);
     }
-    return cmd
+    "rw" => {
+        // 暂时设置得跟counter一样，应该ok
+        cmd.extend_from_slice(&[
+            0x00, 0x0b, // nameALG=SHA256
+            0x00, 0x02, 0x00, 0x02,// 属性：ordinary(0x02's 0) | ownerread | ownerwrite
+            0x00, 0x00, // AuthPolicy
+            0x00, 0x08 // datasize
+        ]);
+    }
+    _ =>{
+        log::info!("[vtpm-nvdefine] nvdefinespace type mismatch")
+    }
+}
+    cmd
 }
 
 fn nvextend_cmd(index :&Vec<u8>) -> Vec<u8>{
+    // 整体结构：header-TPMI_RH_NV_AUTH-TPMI_RH_NV_INDEX-TPM2B_MAX_NV_BUFFER
+
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
     cmd.extend_from_slice(&[
         0x80, 0x02, //ST
         0x00, 0x00, 0x00, 0x00, // placeholder
-        0x00, 0x00, 0x01, 0x36 // CC=TPM2_NV_EXTEND
+        0x00, 0x00, 0x01, 0x36 // CC=TPM_CC_NV_EXTEND
     ]);
     // 
     cmd.extend_from_slice(&[ 
@@ -215,6 +235,52 @@ fn nvextend_cmd(index :&Vec<u8>) -> Vec<u8>{
     ]);
     return cmd
 }
+
+fn nvread_cmd(index :&Vec<u8>) -> Vec<u8>{
+    // 整体结构：header-TPMI_RH_NV_AUTH-TPMI_RH_NV_INDEX-size-offset
+
+    let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
+    cmd.extend_from_slice(&[
+        0x80, 0x02, //ST
+        0x00, 0x00, 0x00, 0x00, // size=placeholder
+        0x00, 0x00, 0x01, 0x4e // TPM_CC_NV_READ
+    ]);
+    // 
+    cmd.extend_from_slice(&[ 
+        0x40, 0x00, 0x00, 0x01 // Auth Handle:TPM_RH_OWNER
+    ]);
+    cmd.extend_from_slice(&index); // NV_INDEX
+    extend_empty_auth(&mut cmd); // empty auth area
+    cmd.extend_from_slice(&[0x00, 0x08]); //size
+    cmd.extend_from_slice(&[0x00, 0x00]); //offset
+    return cmd
+}
+
+fn nvwrite_cmd(index: &Vec<u8>, data: &[u8; 8]) -> Vec<u8>{
+    // 整体结构：header-TPMI_RH_NV_AUTH-TPMI_RH_NV_INDEX-TPM2B_MAX_NV_BUFFER-UINT16
+    
+    let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
+    cmd.extend_from_slice(&[
+        0x80, 0x02, //ST
+        0x00, 0x00, 0x00, 0x00, // size=placeholder
+        0x00, 0x00, 0x01, 0x37 // TPM_CC_NV_WRITE
+    ]);
+    // 
+    cmd.extend_from_slice(&[ 
+        0x40, 0x00, 0x00, 0x01 // Auth Handle:TPM_RH_OWNER
+    ]);
+    cmd.extend_from_slice(&index); // NV_INDEX
+    extend_empty_auth(&mut cmd); // empty auth area
+    // ===NV Buffer===/
+    cmd.extend_from_slice(&[
+        0x00, 0x08, // size=8
+    ]);
+    // let data: [u8; 8] = data.as_slice().try_into().unwrap();
+    cmd.extend_from_slice(data);
+    cmd.extend_from_slice(&[0x00, 0x00]);
+    return cmd
+}
+
 
 #[warn(dead_code)]
 fn createprimary_cmd() -> Vec<u8>{
@@ -288,19 +354,52 @@ pub fn checked_send<T: TcgTpmSimulatorInterface>(
     } else {
         command_size = u32::from_be_bytes(cmd[2..6].try_into().unwrap()) as usize;
     }
-    log::info!("[vtpm-stream] sending cmd is {:02x?}", &cmd);
-    let response = vtpm
+
+    // parse CC
+    let cc: &str;
+    match cmd[6..10]{
+        [0x00, 0x00, 0x01, 0x4e] => {
+            cc = "TPM_CC_NV_Read";
+        }
+        [0x00, 0x00, 0x01, 0x37] => {
+            cc = "TPM_CC_NV_Write";
+        }
+        [0x00, 0x00, 0x01, 0x36] => {
+            cc = "TPM_CC_NV_Extend";
+        }
+        [0x00, 0x00, 0x01, 0x7a] => {
+            cc = "TPM_CC_GetCapability";
+        }
+        [0x00, 0x00, 0x01, 0x2a] => {
+            cc = "TPM_CC_NV_DefineSpace";
+        }
+        [0x00, 0x00, 0x01, 0x44] => {
+            cc = "TPM_CC_Startup";
+        }
+        [0x00, 0x00, 0x01, 0x34] => {
+            cc = "CC_NV_Increment";
+        }
+        [0x00, 0x00, 0x01, 0x76] => {
+            cc = "TPM_CC_StartAuthSession";
+        }
+        _ => {
+            cc = "unrecognized cmd";
+        }
+    }
+
+    log::info!("[vtpm-stream] cmd [CC={}] request is {:02x?}", &cc, &cmd);
+    let resp = vtpm
         .send_tpm_command(&cmd[..command_size], 0)
         .map_err(|_| SvsmVTpmError::ReqError(SvsmReqError::invalid_request()))?;
-    log::info!("[vtpm-stream] received resp is: {:02x?}", response);
+    log::info!("[vtpm-stream] cmd [CC={}] resp is: {:02x?}", &cc, resp);
 
-    let rc = tpm_cmd_rc(&response);
+    let rc = tpm_cmd_rc(&resp);
     if rc != TPM_RC_SUCCESS {
-        log::info!("[vtpm-stream] execute this cmd success");
+        log::info!("[vtpm-stream] cmd [CC={}] execution fail", &cc);
         return Err(SvsmVTpmError::CommandError(rc));
     }
-    log::info!("[vtpm-stream] execute this cmd fail");
-    Ok(response)
+    log::info!("[vtpm-stream] cmd [CC={}] execution success", &cc);
+    Ok(resp)
 }
 
 /// Uses `vtpm` to create an a primary key on the endorsement hierarchy.
@@ -329,16 +428,6 @@ pub fn create_ek<T: TcgTpmSimulatorInterface>(
     Ok(response.drain(20..(20 + size_of_tpmt_public)).collect())
 }
 
-pub fn nvdefine<T: TcgTpmSimulatorInterface>(
-    vtpm: &T, index : &Vec<u8>, nvtype: &str
-) -> Result<Vec<u8>, SvsmVTpmError> {
-    let mut cmd = nvdefine_cmd(&index, &nvtype);
-    let resp = checked_send(vtpm, &mut cmd, true)?;
-    // Get size (UINT16) of TPMT_PUBLIC at offset 18.
-    // Note this is output from the TPM, so its value is trusted.
-    log::info!("[tpm2_nvdefine] response is: {:02x?}", resp);
-    Ok(resp)
-}
 
 pub fn start_authsession<T: TcgTpmSimulatorInterface>(
     vtpm: &T,
@@ -347,10 +436,8 @@ pub fn start_authsession<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, /*set_len=*/ true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("[tpm2_startauthsession] response is: {:02x?}", resp);
     Ok(resp)
 }
-
 
 pub fn startup<T: TcgTpmSimulatorInterface>(
     vtpm: &T,
@@ -359,7 +446,6 @@ pub fn startup<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("[tpm2_startup] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -370,7 +456,16 @@ pub fn getcap<T: TcgTpmSimulatorInterface>(
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
-    log::info!("[tpm2_getcap] response is: {:02x?}", resp);
+    Ok(resp)
+}
+
+pub fn nvdefine<T: TcgTpmSimulatorInterface>(
+    vtpm: &T, index : &Vec<u8>, nvtype: &str
+) -> Result<Vec<u8>, SvsmVTpmError> {
+    let mut cmd = nvdefine_cmd(&index, &nvtype);
+    let resp = checked_send(vtpm, &mut cmd, true)?;
+    // Get size (UINT16) of TPMT_PUBLIC at offset 18.
+    // Note this is output from the TPM, so its value is trusted.
     Ok(resp)
 }
 
@@ -379,7 +474,6 @@ pub fn nvextend<T: TcgTpmSimulatorInterface>(
 ) -> Result<Vec<u8>, SvsmVTpmError> {
     let mut cmd = nvextend_cmd(&index);
     let resp = checked_send(vtpm, &mut cmd, true)?;
-    log::info!("[tpm2_nvextend] response is: {:02x?}", resp);
     Ok(resp)
 }
 
@@ -388,6 +482,21 @@ pub fn nvincrement<T: TcgTpmSimulatorInterface>(
 ) -> Result<Vec<u8>, SvsmVTpmError> {
     let mut cmd = nvincrement_cmd(&index);
     let resp = checked_send(vtpm, &mut cmd, true)?;
-    log::info!("[tpm2_increment] response is: {:02x?}", resp);
+    Ok(resp)
+}
+
+pub fn nvwrite<T: TcgTpmSimulatorInterface>(
+    vtpm: &T, index: &Vec<u8>, data: &[u8; 8]
+) -> Result<Vec<u8>, SvsmVTpmError> {
+    let mut cmd = nvwrite_cmd(index, data);
+    let resp = checked_send(vtpm, &mut cmd, true)?;
+    Ok(resp)
+}
+
+pub fn nvread<T: TcgTpmSimulatorInterface>(
+    vtpm: &T, index: &Vec<u8>
+) -> Result<Vec<u8>, SvsmVTpmError> {
+    let mut cmd = nvread_cmd(index);
+    let resp = checked_send(vtpm, &mut cmd, true)?;
     Ok(resp)
 }

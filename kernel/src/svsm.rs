@@ -355,16 +355,25 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         panic!("Failed to prepare guest FW: {e:#?}");
     }
 
-    // Load the encryption key
+    // Load the encryption key (and tmc)
+    let tmc_bytes: [u8; 8];
     let key: Option<_> = {
         #[cfg(feature = "attest")]
         {
             let mut driver = AttestationDriver::try_from(Tee::Snp).unwrap();
             let secret = driver.attest().expect("Remote attestation failed");
-            log::info!("[svsm-main] The injected secret is\n{:?}", secret);
+            log::info!("[svsm-main] The injected secret and tmc is\n{:?}", secret);
+
+            let key_bytes = &secret[..secret.len() - 8];
+            tmc_bytes = (secret[secret.len() - 8 .. ]).try_into().unwrap();
+            log::info!("[svsm] key bytes is:\n{:?}\ntmc bytes is:\n{:?}", key_bytes, tmc_bytes);
+            // let tmc_bytes: [u8; 8] = tmc_bytes.try_into();
+            // let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into();
+            // log::info!("[svsm] received tmc literal is:\n{}", tmc);
+
 
             let mut xts_key = [0; 64];
-            xts_key[..64].copy_from_slice(&secret);
+            xts_key[..64].copy_from_slice(key_bytes);
 
             Some(xts_key)
         }
@@ -379,7 +388,7 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     initialize_blk(key);
 
     #[cfg(all(feature = "vtpm", not(test)))]
-    vtpm_init(false).expect("vTPM failed to initialize");
+    vtpm_init(false, &tmc_bytes).expect("vTPM failed to initialize");
 
     #[cfg(all(feature = "uefivars", not(test)))]
     uefi_mm_protocol_init().expect("uefi mm protocol failed to initialize");

@@ -13,6 +13,7 @@ pub mod tcgtpm;
 extern crate alloc;
 
 use alloc::vec::Vec;
+use alloc::string::String;
 
 use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
 use crate::vtpm::tcgtpm::tss;
@@ -101,47 +102,105 @@ static VTPM: SpinLock<Vtpm> = SpinLock::new(Vtpm::new());
 
 /// Initialize the TPM by calling the init() implementation of the
 /// [`VtpmInterface`]
-pub fn vtpm_init(manufacture: bool) -> Result<(), SvsmReqError> {
-    let counter_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
-    let extend_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x02].to_vec();
-
+pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqError> {
     let mut vtpm = VTPM.lock();
     if vtpm.is_powered_on() {
         return Ok(());
     }
     vtpm.init(manufacture)?;
-    // 手动解引用
     let vvtpm: &mut Vtpm = &mut *vtpm;
-    // 开机
     let _ = tss::startup(vvtpm);
-    // pre getcap
+    // 发送cap命令
     let  property = [0x01, 0x00, 0x00, 0x00].to_vec();
-    let mut is_defined_extend: Option<bool> = Some(false);
-    let mut is_defined_counter: Option<bool> = Some(false);
+    let mut cap_resp = tss::getcap(vvtpm, &property)?;
+
+    // 检查lmc是否已定义（是否初次启动）
+    let mut is_lmc_defined: Option<bool> = Some(false);
+    let lmc_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
+    parse_getcap(&mut cap_resp, &mut is_lmc_defined, &lmc_index);
+    match is_lmc_defined {
+        Some(true) => {
+            log::info!("[vtpm] lmc 已定义，不是初次启动");
+        }
+        Some(false) => {
+            log::info!("[vtpm] lmc 尚未定义，是初次启动");
+        }
+        _ => {
+            log::info!("[vtpm] parse error");
+        }
+    }
     
-    let mut cap_stream = tss::getcap(vvtpm, &property)?;
-    parse_getcap(&mut cap_stream, &mut is_defined_extend, &extend_index, &mut is_defined_counter, &counter_index);
-    log::info!("is_define status is: counter:{},extend:{}", is_defined_counter.unwrap(), is_defined_extend.unwrap());
-
-    // nvdefine(counter)
-    if is_defined_counter == Some(false){
-        let _ = tss::nvdefine(vvtpm, &counter_index, &"counter");
+    // 校验
+    match is_lmc_defined{
+        Some(true) => {
+            // read the old lmc, compare it with the new one, and write the new one
+            let resp_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
+            let mut lmc_u64: u64 = extract_mc(&resp_bytes).unwrap();
+    let mut tmc_u64: u64 = u64::from_ne_bytes(*tmc_array);
+            if tmc_u64 != lmc_u64 +1 {
+                log::info!("[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
+                // let is_admin = verify_admin_passwd();
+                // if !is_admin{
+                return Err(SvsmReqError::invalid_request())
+            }else{
+                log::info!("[vtpm] 正常非初次启动，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
+                _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
+            }
+        }
+        Some(false) => {
+            log::info!("[vtpm] 正常初次启动，register lmc[{:?}] into the cvm", &tmc_array);
+            let _ = tss::nvdefine(vvtpm, &lmc_index, &"rw");
+            _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
+        }
+        _ => {
+            log::info!("[vtpm] parse error");
+        }
     }
-    // nvdefine(extend)
-    if is_defined_extend == Some(false){
-        let _ = tss::nvdefine(vvtpm, &extend_index, &"extend");
-    }
-
-    // post getcap
+    // post (nvindex situation) check
     // property = [0x01, 0x00, 0x00, 0x00].to_vec();
     // cap_stream = tss::getcap(vvtpm, &property)?;
     // parse_getcap(&mut cap_stream, &mut None, &extend_index, &mut None, &counter_index);
 
-    // nv_extend & nv_increment
-    _ = tss::nvextend(vvtpm, &extend_index)?;
-    _ = tss::nvincrement(vvtpm, &counter_index)?;
     Ok(())
 }
+
+// // TODO：svsm有无串口输入?
+// fn verify_admin_passwd() -> bool{
+//     const PWD_CORRECT: &str = "root";
+
+//     let mut input = String::new();
+//     // 读取一行用户输入
+//     io::stdin()
+//         .read_line(&mut input)
+//         .expect("读取输入失败");
+
+//     // 剔除末尾换行符 \n / \r\n
+//     let input = input.trim();
+
+//     if input == PWD_CORRECT {
+//         true
+//     } else {
+//         false
+//     }
+// }
+
+fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
+    let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
+    let param_area_start = if tag == 0x8002 {
+    // 带会话：跳过10B header + 4B parameterSize
+        10 + 4
+    } else {
+    // 无会话：header之后直接参数
+        10
+    };
+
+    let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
+    let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
+    // convert to u64 (ne)
+    let array = nv_data.try_into().map_err(|_e| SvsmReqError::invalid_request())?;
+    Ok(u64::from_ne_bytes(array))
+}
+
 
 pub fn vtpm_get_locked<'a>() -> LockGuard<'a, Vtpm> {
     VTPM.lock()
@@ -154,35 +213,29 @@ pub fn vtpm_get_manifest() -> Result<Vec<u8>, SvsmReqError> {
     vtpm.get_ekpub()
 }
 
-fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined_extend :&mut Option<bool>, extend_index: &Vec<u8>, is_defined_counter :&mut Option<bool>, counter_index: &Vec<u8>){
+fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined :&mut Option<bool>, check_index: &Vec<u8>){
     const BOUND:usize = 19;
 
     if cap_stream.len() < BOUND{
-        log::info!("[getcap] insufficient getcap resp length, error!");
+        log::info!("[vtpm-parse-getcap] insufficient getcap resp length, error!");
         return
     }else if cap_stream.len() == BOUND{
-        log::info!("[getcap] no payload!");
+        log::info!("[vtpm-parse-getcap] no payload!");
         return
     }
 
     let index_count = cap_stream[15..BOUND].to_vec();
     let num = u32::from_be_bytes(index_count.try_into().unwrap());
     let rest = cap_stream.split_off(BOUND);
-    log::info!("[parse_getcap]nv_index_num is {}, data area is {:02x?}" , num, rest);
+    log::info!("[vtpm-parse-getcap] nv_index_num is {}, data area is {:02x?}" , num, rest);
     for chunk in rest.chunks_exact(4) {
         let old_index: Vec<u8> = chunk.try_into().unwrap();
-        if old_index == *extend_index {
-            log::info!("[parse_getcap]extend_index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
-            if is_defined_extend.is_some() {
-               *is_defined_extend = Some(true);
+        if old_index == *check_index {
+            log::info!("[vtpm-parse-getcap] index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
+            if is_defined.is_some() {
+               *is_defined = Some(true);
             }
             continue;
-        }else if old_index == *counter_index {
-            log::info!("[parse_getcap]counter_index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
-            if is_defined_counter.is_some() {
-               *is_defined_counter = Some(true);
-            }
-            continue;    
         }
     }
 }

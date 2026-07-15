@@ -187,7 +187,7 @@ $SUDO_CMD \
     $SNP_GUEST \
     -smp 4 \
     -no-reboot \
-    -netdev user,id=vmnic,hostfwd=tcp::4444-:22 \
+    -netdev user,id=vmnic,hostfwd=tcp::${SSH_PORT}-:22 \
     -device e1000,netdev=vmnic,romfile= \
     $IMAGE_DISK \
     -nographic \

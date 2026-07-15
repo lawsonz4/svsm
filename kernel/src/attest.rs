@@ -121,13 +121,13 @@ impl AttestationDriver<'_> {
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
-        log::info!("[svsm driver] AttestationRequest is:\n{:?}", &req);
+        log::info!("[svsm] AttestationRequest is:\n{:?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
         let response: AttestationResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        log::info!("[svsm driver] AttestationResponse (before decryption) is:\n{:?}", &response);
+        log::info!("[svsm] AttestationResponse (before decryption) is:\n{:?}", &response);
 
         if !response.success {
             return Err(AttestationError::Failed);
@@ -142,7 +142,12 @@ impl AttestationDriver<'_> {
         };
 
         self.decrypt(&mut secret, decryption)?;
-        log::info!("[svsm driver] The final secret got from the kbs is:\n{:?}", &secret);
+        log::info!("[svsm] The final secret got from the kbs is:\n{:?}", &secret);
+        let tmc_bytes = &secret[secret.len() - 8 .. ];
+        log::info!("[svsm] tmc bytes is:\n{:?}", &tmc_bytes);
+        let tmc_bytes: [u8; 8] = tmc_bytes.try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
+        let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
+        log::info!("[svsm] received tmc is:\n{}", tmc);
         Ok(secret)
     }
 
@@ -270,6 +275,8 @@ pub enum AttestationError {
     KeyDerivation(concat_kdf::Error),
     // Unable to convert wrap key to 32 byte array.
     WrapKeyArrayConvert,
+    // Parse tcm fail
+    InvalidTmcBytes,
 }
 
 impl From<AttestationError> for SvsmError {
