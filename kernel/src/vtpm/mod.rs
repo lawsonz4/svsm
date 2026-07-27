@@ -137,7 +137,7 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             let resp_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
             let mut lmc_u64: u64 = extract_mc(&resp_bytes).unwrap();
     let mut tmc_u64: u64 = u64::from_ne_bytes(*tmc_array);
-            if tmc_u64 != lmc_u64 +1 {
+            if tmc_u64 > lmc_u64 +1 {
                 log::info!("[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
                 // let is_admin = verify_admin_passwd();
                 // if !is_admin{
