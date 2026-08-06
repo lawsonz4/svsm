@@ -70,6 +70,23 @@ fn attestation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
     Ok(())
 }
 
+fn resource(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyhow::Result<()> {
+    let request: ResourceRequest = {
+        let payload = proxy_read(stream)?;
+        serde_json::from_slice(&payload)
+            .context("unable to deserialize attestation request from JSON")?
+    };
+    
+    println!("[aproxy-handler] AttestationRequest struct from svsm is:\n{:?}", &request);
+    // Attest the TEE evidence with the server.
+    let response = http.resource(request)?;
+    println!("[aproxy-handler] AttestationResponse struct from protocol is:\n{:?}", &response);
+
+    // Write the response from the attestation server to SVSM.
+    proxy_write(stream, response)?;
+    Ok(())
+}
+
 /// Read bytes from the UNIX socket connected to SVSM. With each write, SVSM first writes an 8-byte
 /// header indicating the length of the buffer. Once the length is read, the buffer can be read.
 fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {

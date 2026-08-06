@@ -371,7 +371,6 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             // let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into();
             // log::info!("[svsm] received tmc literal is:\n{}", tmc);
 
-
             let mut xts_key = [0; 64];
             xts_key[..64].copy_from_slice(key_bytes);
 
@@ -409,11 +408,14 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         }
         crate::test_main();
     }
+    log::info!("lawson001");
 
     match exec_user("/init", opendir("/").expect("Failed to find FS root")) {
         Ok(_) => (),
         Err(e) => log::info!("Failed to launch /init: {e:?}"),
     }
+
+    log::info!("lawson002");
 
     // Start request processing on this CPU if required.
     if SVSM_PLATFORM.start_svsm_request_loop() {
@@ -421,7 +423,9 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             .expect("Failed to launch request loop task");
     }
 
+    log::info!("lawson003");
     cpu_idle_loop(cpu_index);
+    log::info!("lawson004");
 }
 
 #[panic_handler]

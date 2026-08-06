@@ -1373,9 +1373,11 @@ pub extern "C" fn cpu_idle_loop(cpu_index: usize) {
     debug_assert_eq!(cpu_index, this_cpu().get_cpu_index());
 
     loop {
+        log::info!("lawson005");
         // Go idle
         halt();
 
+        log::info!("lawson006");
         // If idle was explicitly requested by another task, then schedule that
         // task to execute again in case it wants to perform processing as a
         // result of the wake from idle.
@@ -1383,8 +1385,10 @@ pub extern "C" fn cpu_idle_loop(cpu_index: usize) {
         if let Some(task) = maybe_task {
             schedule_task(task);
         }
+        log::info!("lawson007");
 
         // Execute any tasks that are currently runnable.
         schedule();
+        log::info!("lawson008");
     }
 }

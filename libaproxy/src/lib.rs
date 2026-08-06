@@ -9,9 +9,11 @@
 
 mod attestation;
 mod negotiation;
+mod resource;
 
 pub use attestation::*;
 pub use negotiation::*;
+pub use resource::*;
 
 #[derive(Debug)]
 pub enum Error {
