@@ -6,7 +6,7 @@
 // Author: Tyler Fanelli <tfanelli@redhat.com>
 
 use super::*;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use kbs15::*;
 use reqwest::StatusCode;
 use serde::{Deserialize};
@@ -16,6 +16,19 @@ use base64::{
     prelude::{BASE64_URL_SAFE_NO_PAD},
     Engine,
 };
+use std::sync::Mutex;
+
+static ATTESTATION_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_attestation_token(token: String) {
+    let mut guard = ATTESTATION_TOKEN.lock().expect("failed to lock attestation token storage");
+    *guard = Some(token);
+}
+
+fn get_attestation_token() -> Option<String> {
+    let guard = ATTESTATION_TOKEN.lock().expect("failed to lock attestation token storage");
+    guard.clone()
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrusteeProtocol;
@@ -48,7 +61,29 @@ impl AttestationProtocol for TrusteeProtocol {
             .post(format!("{}/kbs/v0/auth", http.url))
             .json(&req)
             .send()
+            .map_err(|e| {
+                if e.is_connect() {
+            println!("[aproxy-error] 无法建立 TCP 连接（检查 KBS 进程是否启动、端口/网络隔离）: {e}");
+        } else if e.is_timeout() {
+            println!("[aproxy-error] 请求 KBS 超时（检查防火墙或网络延迟）: {e}");
+        } else if e.is_builder() {
+            println!("[aproxy-error] 构建请求失败（URL 格式或 Header 非法）: {e}");
+        } else if e.is_request() {
+            println!("[aproxy-error] 发送请求过程中出错: {e}");
+        }
+
+        // 3. 打印深层错误链 (Cause Chain)
+        let mut source = std::error::Error::source(&e);
+        let mut depth = 1;
+        while let Some(err) = source {
+            println!("[aproxy-error]  └─ Cause {depth}: {err}");
+            source = err.source();
+            depth += 1;
+        }
+        e
+            })
             .context("unable to POST to KBS /auth endpoint")?;
+
 
         let text = http_resp
             .text()
@@ -137,13 +172,15 @@ impl AttestationProtocol for TrusteeProtocol {
         let resp_struct: TokenResponse = serde_json::from_slice(&body_bytes).unwrap();
         println!("[aproxy-protocol] resp body of /attest is:\n{:?}", &resp_struct);
 
-        // 请求资源
+        set_attestation_token(resp_struct.token.clone());
+
+        // 请求资源作为 attestation 流程的一部分（可选），并保留 token 供后续 resource 接口使用。
         let http_resp = http
             .cli
             .get(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
-            .bearer_auth(resp_struct.token) // 也可以不设置，由kbs从cookie和session中读出
+            .bearer_auth(&resp_struct.token)
             .send()
-            .context("unable to POST to KBS /attest endpoint")?;
+            .context("unable to GET KBS /resource endpoint after attest")?;
         println!("[aproxy-protocol] resp header of lawson/secret/cvm0 is:\n{:?}", &http_resp);
 
         if http_resp.status() != StatusCode::OK {
@@ -176,144 +213,61 @@ impl AttestationProtocol for TrusteeProtocol {
                 tag: resp_struct.tag,
             }),
         })
-
-        // let http_resp = http
-        //     .cli
-        //     .post(format!("{}/kbs/v0/svsm_secret", http.url))
-        //     .send()
-        //     .context("unable to POST to KBS /attest endpoint")?;
-        // println!("[aproxy-protocol] /svsm_secret resp is {:?}", &http_resp);
-
-
-        // Successful attestation. Fetch the secret (which should be stored as "svsm_secret" within
-        // the KBS's RVPS.
-        // let http_resp = http
-        //     .cli
-        //     .post(format!("{}/kbs/v0/svsm_secret", http.url))
-        //     .send()
-        //     .context("unable to POST to KBS /attest endpoint")?;
-        // println!("[aproxy-protocol] /svsm_secret resp is {:?}", &http_resp);
-
-        // Unsuccessful attempt at retrieving secret.
-        // if http_resp.status() != StatusCode::OK {
-        //     return Ok(AttestationResponse {
-        //         success: false,
-        //         secret: None,
-        //         pub_key: None,
-        //     });
-        // }
-
-        // let text = http_resp
-        //     .text()
-        //     .context("unable to read KBS /resource response")?;
-        // println!("[aproxy-protocol] lawson/secret/cvm0 resp text is {:?}", &text);
-
-
-        // let resp: Response = serde_json::from_str(&text)
-        //     .context("unable to convert KBS /resource response to KBS Response object")?;
-        // println!("[aproxy-protocol] lawson/secret/cvm0 resp structure is {:?}", &resp);
-
-
-        // let pub_key = {
-
-        //     let val = serde_json::from_slice(&resp.encrypted_key).unwrap();
-        //     let Value::Object(map) = val else {
-        //         panic!();
-        //     };
-
-        //     let x = map.get("x_b64url").unwrap();
-        //     let Value::String(x) = x else {
-        //         panic!();
-        //     };
-
-        //     let y = map.get("y_b64url").unwrap();
-        //     let Value::String(y) = y else {
-        //         panic!();
-        //     };
-
-        //     AttestationKey::EC {
-        //         crv: "EC521".to_string(),
-        //         x_b64url: x.to_string(),
-        //         y_b64url: y.to_string(),
-        //     }
-        // };
-
     }
-}
 
-fn resource(
+    fn resource(
         &mut self,
         http: &mut HttpClient,
         request: ResourceRequest,
     ) -> anyhow::Result<ResourceResponse> {
 
-        // convert request to http body
+        let token = match &request.token {
+            AttestationToken::Jwt(jwt) if !jwt.is_empty() => {
+                set_attestation_token(jwt.clone());
+                jwt.clone()
+            }
+            AttestationToken::Cwt(cwt) if !cwt.is_empty() => {
+                set_attestation_token(cwt.clone());
+                cwt.clone()
+            }
+            _ => get_attestation_token().ok_or_else(|| anyhow!("attestation token not available"))?,
+        };
 
-        println!("[aproxy-protocol] req struct of /attest is:\n{:?}", &attestation);
-        let attestation_bytes = serde_json::to_vec(&attestation).context("serialize attestation")?;
-        println!("[aproxy-protocol] req bytes of /attest is:\n{:?}", &attestation_bytes);
+        let request_body = serde_json::to_vec(&request)
+            .context("serialize resource request")?;
 
-        // Attest TEE evidence at KBS /attest endpoint.
         let http_resp = http
             .cli
-            .post(format!("{}/kbs/v0/attest", http.url))
+            .put(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
             .header("Content-Type", "application/json")
-            .body(attestation_bytes)
-            // .json(&attestation)
+            .bearer_auth(&token)
+            .body(request_body)
             .send()
-            .context("unable to POST to KBS /attest endpoint")?;
+            .context("unable to PUT to KBS /resource endpoint")?;
 
-
-        // The JSON response from the /attest endpoint is basically ignored here. Instead, we check
-        // the HTTP status to indicate successful attestation.
-        //
-        // FIXME
-        // if http_resp.status() != StatusCode::OK {
-        //     return Ok(AttestationResponse {
-        //         success: false,
-        //         secret: None,
-        //         pub_key: None,
-        //     });
-        // }
-
-        println!("[aproxy-protocol] resp header of /attest is:\n{:?}", &http_resp);
         if http_resp.status() != StatusCode::OK {
-            return Ok(AttestationResponse {
+            return Ok(ResourceResponse {
                 success: false,
                 secret: None,
                 decryption: None,
             });
         }
-        //读body(just for debug)
+
         let body_bytes = http_resp
             .bytes()
             .context("unable to read KBS /resource response")?;
-        println!("[aproxy-protocol] resp bytes of /attest is:\n{:?}", &body_bytes);
-        // 反序列化(just for debug)
-        let resp_struct: TokenResponse = serde_json::from_slice(&body_bytes).unwrap();
-        println!("[aproxy-protocol] resp body of /attest is:\n{:?}", &resp_struct);
 
-        // 请求资源
-        let http_resp = http
-            .cli
-            .get(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
-            .bearer_auth(resp_struct.token) // 也可以不设置，由kbs从cookie和session中读出
-            .send()
-            .context("unable to POST to KBS /attest endpoint")?;
-        println!("[aproxy-protocol] resp header of lawson/secret/cvm0 is:\n{:?}", &http_resp);
+        // Debug print raw response bytes (debug and hex) for investigation
+        let bb = body_bytes.clone();
+        println!("[aproxy-protocol] resp bytes of /resource (len={}): \n{:?}", bb.len(), &bb);
+        println!(
+            "[aproxy-protocol] resp bytes of /resource (hex): \n{}",
+            bb.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+        );
 
-        if http_resp.status() != StatusCode::OK {
-            return Ok(AttestationResponse {
-                success: false,
-                secret: None,
-                decryption: None,
-            });
-        }
-        let body_bytes = http_resp
-            .bytes()
-            .context("unable to read KBS /resource response")?;
-        let resp_struct: Response = serde_json::from_slice(&body_bytes).unwrap();
-        println!("[aproxy-protocol] resp body of lawson/secret/cvm0 is:\n{:?}", &resp_struct);
+        let resp_struct: Response = serde_json::from_slice(&body_bytes)
+            .context("unable to deserialize KBS /resource response")?;
+        println!("[aproxy-protocol] resp body of /resource is:\n{:?}", &resp_struct);
 
         let epk = unwrap_epk(&resp_struct)?;
         let aad = resp_struct
@@ -321,7 +275,7 @@ fn resource(
             .generate_aad()
             .context("unable to generate AAD")?;
 
-        Ok(AttestationResponse {
+        Ok(ResourceResponse {
             success: true,
             secret: Some(resp_struct.ciphertext),
             decryption: Some(AesGcmData {
@@ -333,69 +287,9 @@ fn resource(
             }),
         })
 
-        // let http_resp = http
-        //     .cli
-        //     .post(format!("{}/kbs/v0/svsm_secret", http.url))
-        //     .send()
-        //     .context("unable to POST to KBS /attest endpoint")?;
-        // println!("[aproxy-protocol] /svsm_secret resp is {:?}", &http_resp);
-
-
-        // Successful attestation. Fetch the secret (which should be stored as "svsm_secret" within
-        // the KBS's RVPS.
-        // let http_resp = http
-        //     .cli
-        //     .post(format!("{}/kbs/v0/svsm_secret", http.url))
-        //     .send()
-        //     .context("unable to POST to KBS /attest endpoint")?;
-        // println!("[aproxy-protocol] /svsm_secret resp is {:?}", &http_resp);
-
-        // Unsuccessful attempt at retrieving secret.
-        // if http_resp.status() != StatusCode::OK {
-        //     return Ok(AttestationResponse {
-        //         success: false,
-        //         secret: None,
-        //         pub_key: None,
-        //     });
-        // }
-
-        // let text = http_resp
-        //     .text()
-        //     .context("unable to read KBS /resource response")?;
-        // println!("[aproxy-protocol] lawson/secret/cvm0 resp text is {:?}", &text);
-
-
-        // let resp: Response = serde_json::from_str(&text)
-        //     .context("unable to convert KBS /resource response to KBS Response object")?;
-        // println!("[aproxy-protocol] lawson/secret/cvm0 resp structure is {:?}", &resp);
-
-
-        // let pub_key = {
-
-        //     let val = serde_json::from_slice(&resp.encrypted_key).unwrap();
-        //     let Value::Object(map) = val else {
-        //         panic!();
-        //     };
-
-        //     let x = map.get("x_b64url").unwrap();
-        //     let Value::String(x) = x else {
-        //         panic!();
-        //     };
-
-        //     let y = map.get("y_b64url").unwrap();
-        //     let Value::String(y) = y else {
-        //         panic!();
-        //     };
-
-        //     AttestationKey::EC {
-        //         crv: "EC521".to_string(),
-        //         x_b64url: x.to_string(),
-        //         y_b64url: y.to_string(),
-        //     }
-        // };
-
     }
 }
+
 
 fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
     let epk = resp
@@ -410,7 +304,7 @@ fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
         .as_str()
         .context("unable to convert EC crv value to string")?;
 
-    let x = BASE64_URL_SAFE_NO_PAD
+    let mut x = BASE64_URL_SAFE_NO_PAD
         .decode(
             epk.get("x")
                 .context("EC x value not found")?
@@ -419,7 +313,7 @@ fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
         )
         .context("unable to decode EC x value from base64")?;
 
-    let y = BASE64_URL_SAFE_NO_PAD
+    let mut y = BASE64_URL_SAFE_NO_PAD
         .decode(
             epk.get("y")
                 .context("EC y value not found")?
@@ -427,6 +321,32 @@ fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
                 .context("unable to convert EC y value to string")?,
         )
         .context("unable to decode EC y value from base64")?;
+
+    let expected_len = match _crv {
+        "P-521" => 66,
+        "P-256" => 32,
+        "P-384" => 48,
+        _ => x.len().max(y.len()),
+    };
+
+    if x.len() == expected_len + 1 && x[0] == 0 {
+        println!("[aproxy-protocol] normalized EC x by stripping leading zero, len {} -> {}", x.len(), expected_len);
+        x.remove(0);
+    }
+    if y.len() == expected_len + 1 && y[0] == 0 {
+        println!("[aproxy-protocol] normalized EC y by stripping leading zero, len {} -> {}", y.len(), expected_len);
+        y.remove(0);
+    }
+
+    if x.len() != expected_len || y.len() != expected_len {
+        return Err(anyhow!(
+            "invalid EC coordinate length: x={} y={} expected={} for curve {}",
+            x.len(),
+            y.len(),
+            expected_len,
+            _crv
+        ));
+    }
 
     Ok(EcP256PublicKey { x, y })
 }

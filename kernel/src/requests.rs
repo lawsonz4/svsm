@@ -123,20 +123,48 @@ pub extern "C" fn request_loop_main(cpu_index: usize) {
 
     let mut count = 0;
     loop {
-        if count % 100000 == 0 { // 定时动态检测
+        if count % 1000000 == 0 { // 定时动态检测
             #[cfg(all(feature = "vtpm", not(test)))]{
                 let lmc_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
                 let mut vtpm = VTPM.lock();
                 let vvtpm: &mut Vtpm = &mut *vtpm;
                 // read the old lmc, compare it with the new one, and write the new one
                 let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-                // TODO convert to lmc_u64
-                let lmc_u64 = 0;
+                // convert to lmc_u64 using a simple 8-byte conversion
+                let lmc_u64: u64 = if lmc_bytes.len() >= 8 {
+                    let arr: [u8; 8] = lmc_bytes[lmc_bytes.len() - 8 ..]
+                        .try_into()
+                        .unwrap_or([0u8; 8]);
+                    u64::from_ne_bytes(arr)
+                } else {
+                    log::error!("LMC NV length too small: {}", lmc_bytes.len());
+                    0u64
+                };
 
-                // TODO request and extract TMC
-                let tmc_bytes: Vec<u8> = Vec::new();
-                let tmc_u64: u64 = extract_mc(&tmc_bytes).unwrap();
-                
+                // Request and extract TMC via AttestationDriver when available.
+                #[cfg(feature = "attest")]
+                let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
+                    let mut driver = crate::attest::AttestationDriver::try_from(kbs_types::Tee::Snp).unwrap();
+                    match driver.resource() {
+                        Ok(secret) => {
+                            if secret.len() >= 8 {
+                                let tmc_vec = secret[secret.len() - 8 ..].to_vec();
+                                let tmc_u = extract_mc(&tmc_vec).unwrap_or(u64::from_ne_bytes(
+                                    tmc_vec.as_slice().try_into().unwrap_or([0u8; 8])
+                                ));
+                                (tmc_vec, tmc_u)
+                            } else {
+                                (Vec::new(), 0u64)
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Resource request failed: {:?}", e);
+                            (Vec::new(), 0u64)
+                        }
+                    }
+                };
+
+                #[cfg(feature = "attest")]
                 // let mut tmc_u64: u64 = u64::from_ne_bytes(*tmc_array);
                 if tmc_u64 > lmc_u64 + 1 {
                     log::info!("[Cloning attack detected] Trusted-MC is {}, Local-MC is {}\n", &lmc_u64, &tmc_u64);

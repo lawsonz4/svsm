@@ -15,13 +15,37 @@ use std::{
 };
 
 /// Attest an SVSM client session.
-pub fn attest(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyhow::Result<()> {
-    negotiation(stream, http)?;
-    attestation(stream, http)?;
+/// Perform initial negotiation using an externally-read payload.
+pub fn negotiation_with_payload(
+    payload: Vec<u8>,
+    stream: &mut UnixStream,
+    http: &mut backend::HttpClient,
+) -> anyhow::Result<()> {
+    let request: NegotiationRequest = serde_json::from_slice(&payload)
+        .context("unable to deserialize negotiation request from JSON")?;
 
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
+    println!("[aproxy-handler] NegotiationRequest struct from svsm is:\n{:#?}", &request);
+    let response: NegotiationResponse = http.negotiation(request)?;
+    println!("[aproxy-handler] NegotiationResponse struct from protocol is:\n{:#?}", &response);
 
+    proxy_write(stream, response)?;
+    Ok(())
+}
+
+/// Perform attestation using an externally-read payload.
+pub fn attestation_with_payload(
+    payload: Vec<u8>,
+    stream: &mut UnixStream,
+    http: &mut backend::HttpClient,
+) -> anyhow::Result<()> {
+    let request: AttestationRequest = serde_json::from_slice(&payload)
+        .context("unable to deserialize attestation request from JSON")?;
+
+    println!("[aproxy-handler] AttestationRequest struct from svsm is:\n{:?}", &request);
+    let response = http.attestation(request)?;
+    println!("[aproxy-handler] AttestationResponse struct from protocol is:\n{:?}", &response);
+
+    proxy_write(stream, response)?;
     Ok(())
 }
 
@@ -73,14 +97,14 @@ fn attestation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
 fn resource(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyhow::Result<()> {
     let request: ResourceRequest = {
         let payload = proxy_read(stream)?;
+
         serde_json::from_slice(&payload)
-            .context("unable to deserialize attestation request from JSON")?
+            .context("unable to deserialize resource request from JSON")?
     };
-    
-    println!("[aproxy-handler] AttestationRequest struct from svsm is:\n{:?}", &request);
-    // Attest the TEE evidence with the server.
+
+    println!("[aproxy-handler] ResourceRequest struct from svsm is:\n{:?}", &request);
     let response = http.resource(request)?;
-    println!("[aproxy-handler] AttestationResponse struct from protocol is:\n{:?}", &response);
+    println!("[aproxy-handler] ResourceResponse struct from protocol is:\n{:?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -89,7 +113,7 @@ fn resource(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyhow::
 
 /// Read bytes from the UNIX socket connected to SVSM. With each write, SVSM first writes an 8-byte
 /// header indicating the length of the buffer. Once the length is read, the buffer can be read.
-fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
+pub fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
     let len = {
         let mut bytes = [0u8; 8];
 
@@ -112,7 +136,7 @@ fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
 
 /// Write bytes to the UNIX socket connected to SVSM. With each write, an 8-byte header indicating
 /// the length of the buffer is written. Once the length is written, the buffer is written.
-fn proxy_write(stream: &mut UnixStream, buf: impl Serialize) -> anyhow::Result<()> {
+pub fn proxy_write(stream: &mut UnixStream, buf: impl Serialize) -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(&buf).context("unable to convert buffer to JSON bytes")?;
     let len = bytes.len();
     let len_ne = len.to_ne_bytes();

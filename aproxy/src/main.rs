@@ -48,7 +48,44 @@ fn main() -> anyhow::Result<()> {
             Ok(mut stream) => {
                 let mut http_client = backend::HttpClient::new(args.url.clone(), args.backend)?;
                 println!("[aproxy-server] http client info is:\n{:#?}", &http_client);
-                attest::attest(&mut stream, &mut http_client)?;
+
+                // Keep reading generic payloads and dispatch by trying to deserialize
+                // into known request types. The first successful deserialization
+                // determines the handler. `stream` is used only to write responses
+                // via `attest::proxy_write`.
+                loop {
+                    let payload = match attest::proxy_read(&mut stream) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            println!("[aproxy-server] session end or read error: {:?}", e);
+                            break;
+                        }
+                    };
+                    // Resource?
+                    if let Ok(req) = serde_json::from_slice::<libaproxy::ResourceRequest>(&payload) {
+                        println!("[aproxy-server] ResourceRequest struct from svsm is:\n{:?}", &req);
+                        let response = http_client.resource(req)?;
+                        println!("[aproxy-server] ResourceResponse struct from protocol is:\n{:?}", &response);
+                        attest::proxy_write(&mut stream, response)?;
+                        continue;
+                    }
+
+                    // Negotiation?
+                    if serde_json::from_slice::<libaproxy::NegotiationRequest>(&payload).is_ok() {
+                        attest::negotiation_with_payload(payload, &mut stream, &mut http_client)?;
+                        continue;
+                    }
+
+                    // Attestation?
+                    if serde_json::from_slice::<libaproxy::AttestationRequest>(&payload).is_ok() {
+                        attest::attestation_with_payload(payload, &mut stream, &mut http_client)?;
+                        continue;
+                    }
+
+
+
+                    println!("[aproxy-server] Unknown request payload received: {:?}", &payload);
+                }
             }
             Err(_) => {
                 panic!("error");

@@ -16,7 +16,7 @@ use crate::{
 };
 use aes_gcm::{aead::generic_array::GenericArray, AeadInPlace, Aes256Gcm, KeyInit, Nonce};
 use aes_kw::{Kek, KekAes256};
-use alloc::{string::ToString, vec::Vec};
+use alloc::{string::{String, ToString}, vec::Vec};
 use base64::{
     prelude::{BASE64_STANDARD, BASE64_URL_SAFE},
     Engine,
@@ -143,11 +143,41 @@ impl AttestationDriver<'_> {
 
         self.decrypt(&mut secret, decryption)?;
         log::info!("[svsm] The final secret got from the kbs is:\n{:?}", &secret);
+        
         let tmc_bytes = &secret[secret.len() - 8 .. ];
         log::info!("[svsm] tmc bytes is:\n{:?}", &tmc_bytes);
         let tmc_bytes: [u8; 8] = tmc_bytes.try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
         let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
         log::info!("[svsm] received tmc is:\n{}", tmc);
+        Ok(secret)
+    }
+
+    pub fn resource(&mut self) -> Result<Vec<u8>, AttestationError> {
+        let request = ResourceRequest {
+            token: AttestationToken::Jwt(String::new()),
+        };
+        log::info!("[svsm] ResourceRequest is:\n{:?}", &request);
+
+        self.write(request)?;
+        let payload = self.read()?;
+        let response: ResourceResponse = serde_json::from_slice(&payload)
+            .map_err(|_| AttestationError::AttestationDeserialize)?;
+        log::info!("[svsm] ResourceResponse (before decryption) is:\n{:?}", &response);
+
+        if !response.success {
+            return Err(AttestationError::Failed);
+        }
+
+        let Some(decryption) = response.decryption else {
+            return Err(AttestationError::PublicKeyMissing)?;
+        };
+
+        let Some(mut secret) = response.secret else {
+            return Err(AttestationError::SecretMissing);
+        };
+
+        self.decrypt(&mut secret, decryption)?;
+        log::info!("[svsm] Resource secret before return:\n{:?}", &secret);
         Ok(secret)
     }
 
