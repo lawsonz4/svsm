@@ -16,7 +16,7 @@ use core::slice;
 use cpuarch::snp_cpuid::SnpCpuidTable;
 use svsm::address::{Address, PhysAddr, VirtAddr};
 #[cfg(feature = "attest")]
-use svsm::attest::AttestationDriver;
+use svsm::attest::{AttestationDriver, ATTESTATION_DRIVER};
 use svsm::config::SvsmConfig;
 use svsm::console::install_console_logger;
 use svsm::cpu::control_regs::{cr0_init, cr4_init};
@@ -53,7 +53,7 @@ use svsm::requests::request_loop_main;
 use svsm::sev::secrets_page_mut;
 use svsm::svsm_paging::{init_page_table, invalidate_early_boot_memory};
 use svsm::task::schedule_init;
-use svsm::task::{exec_user, start_kernel_task};
+use svsm::task::{exec_user, schedule, set_affinity, start_kernel_task};
 use svsm::types::PAGE_SIZE;
 use svsm::utils::{immut_after_init::ImmutAfterInitCell, zero_mem_region, MemoryRegion};
 #[cfg(all(feature = "vtpm", not(test)))]
@@ -62,10 +62,18 @@ use svsm::vtpm::vtpm_init;
 use svsm::mm::validate::{init_valid_bitmap_ptr, migrate_valid_bitmap};
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use release::COCONUT_VERSION;
 
 #[cfg(feature = "attest")]
 use kbs_types::Tee;
+
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use svsm::vtpm::tcgtpm::tss;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use svsm::vtpm::tcgtpm::TcgTpm as Vtpm;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use svsm::vtpm::VTPM;
 
 extern "C" {
     static bsp_stack: u8;
@@ -365,8 +373,12 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             log::info!("[svsm-main] The injected secret and tmc is\n{:?}", secret);
 
             let key_bytes = &secret[..secret.len() - 8];
-            tmc_bytes = (secret[secret.len() - 8 .. ]).try_into().unwrap();
-            log::info!("[svsm] key bytes is:\n{:?}\ntmc bytes is:\n{:?}", key_bytes, tmc_bytes);
+            tmc_bytes = (secret[secret.len() - 8..]).try_into().unwrap();
+            log::info!(
+                "[svsm] key bytes is:\n{:?}\ntmc bytes is:\n{:?}",
+                key_bytes,
+                tmc_bytes
+            );
             // let tmc_bytes: [u8; 8] = tmc_bytes.try_into();
             // let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into();
             // log::info!("[svsm] received tmc literal is:\n{}", tmc);
@@ -374,6 +386,7 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             let mut xts_key = [0; 64];
             xts_key[..64].copy_from_slice(key_bytes);
 
+            ATTESTATION_DRIVER.lock().replace(driver);
             Some(xts_key)
         }
 
@@ -408,14 +421,11 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         }
         crate::test_main();
     }
-    log::info!("lawson001");
 
     match exec_user("/init", opendir("/").expect("Failed to find FS root")) {
         Ok(_) => (),
         Err(e) => log::info!("Failed to launch /init: {e:?}"),
     }
-
-    log::info!("lawson002");
 
     // Start request processing on this CPU if required.
     if SVSM_PLATFORM.start_svsm_request_loop() {
@@ -423,9 +433,95 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             .expect("Failed to launch request loop task");
     }
 
-    log::info!("lawson003");
+    #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+    {
+        start_kernel_task(
+            dynamic_detection_task,
+            0,
+            String::from("dynamic detection on CPU 0"),
+        )
+        .expect("Failed to launch dynamic detection task");
+    }
+
     cpu_idle_loop(cpu_index);
-    log::info!("lawson004");
+}
+
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+pub extern "C" fn dynamic_detection_task(cpu_index: usize) {
+    log::info!("Launching dynamic detection task on CPU {}", cpu_index);
+
+    if cpu_index != 0 {
+        set_affinity(cpu_index);
+    }
+
+    debug_assert_eq!(cpu_index, this_cpu().get_cpu_index());
+
+    let lmc_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
+    let mut count: u64 = 0;
+
+    log::debug!(
+        "dynamic_detection_task heartbeat on CPU {}: count={}",
+        cpu_index,
+        count
+    );
+
+    let mut vtpm = VTPM.lock();
+    let vvtpm: &mut Vtpm = &mut *vtpm;
+
+    let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
+    let lmc_u64: u64 = if lmc_bytes.len() >= 8 {
+        let arr: [u8; 8] = lmc_bytes[lmc_bytes.len() - 8..]
+            .try_into()
+            .unwrap_or([0u8; 8]);
+        u64::from_ne_bytes(arr)
+    } else {
+        log::error!("LMC NV length too small: {}", lmc_bytes.len());
+        0u64
+    };
+
+    let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
+        let mut guard = ATTESTATION_DRIVER.lock();
+        let driver = guard
+            .as_mut()
+            .expect("Attestation driver has not been initialized");
+        match driver.resource() {
+            Ok(secret) => {
+                if secret.len() >= 8 {
+                    let tmc_vec = secret[secret.len() - 8..].to_vec();
+                    let tmc_u =
+                        u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
+                    (tmc_vec, tmc_u)
+                } else {
+                    (Vec::new(), 0u64)
+                }
+            }
+            Err(e) => {
+                log::error!("Resource request failed: {:?}", e);
+                (Vec::new(), 0u64)
+            }
+        }
+    };
+
+    if tmc_u64 > lmc_u64 + 1 {
+        log::debug!(
+            "[Cloning attack detected] Trusted-MC is {}, Local-MC is {}\n",
+            &lmc_u64,
+            &tmc_u64,
+        );
+    } else if tmc_u64 == lmc_u64 + 1 {
+        log::debug!(
+            "[Normal running] Trusted-MC is {}, Local-MC is {}\n",
+            tmc_u64,
+            lmc_u64,
+        );
+        let tmc_array: [u8; 8] = tmc_bytes
+            .as_slice()
+            .try_into()
+            .expect("tmc_bytes 长度必须恰好为 8 字节");
+        tss::nvwrite(vvtpm, &lmc_index, &tmc_array).unwrap();
+
+        schedule();
+    }
 }
 
 #[panic_handler]

@@ -11,6 +11,7 @@ use crate::{
     error::SvsmError,
     greq::{pld_report::*, services::get_regular_report},
     io::{Read, Write, DEFAULT_IO_DRIVER},
+    locking::SpinLock,
     serial::SerialPort,
     utils::vec::{try_to_vec, vec_sized},
 };
@@ -45,6 +46,8 @@ pub struct AttestationDriver<'a> {
     tee: Tee,
     ecc: EccKey,
 }
+
+pub static ATTESTATION_DRIVER: SpinLock<Option<AttestationDriver<'static>>> = SpinLock::new(None);
 
 impl TryFrom<Tee> for AttestationDriver<'_> {
     type Error = SvsmError;
@@ -143,7 +146,7 @@ impl AttestationDriver<'_> {
 
         self.decrypt(&mut secret, decryption)?;
         log::info!("[svsm] The final secret got from the kbs is:\n{:?}", &secret);
-        
+
         let tmc_bytes = &secret[secret.len() - 8 .. ];
         log::info!("[svsm] tmc bytes is:\n{:?}", &tmc_bytes);
         let tmc_bytes: [u8; 8] = tmc_bytes.try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;

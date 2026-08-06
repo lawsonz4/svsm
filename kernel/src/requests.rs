@@ -25,12 +25,6 @@ use crate::protocols::{
 
 use alloc::vec::Vec;
 
-#[cfg(all(feature = "vtpm", not(test)))]
-use crate::vtpm::VTPM;
-#[cfg(all(feature = "vtpm", not(test)))]
-use crate::vtpm::tcgtpm::tss;
-#[cfg(all(feature = "vtpm", not(test)))]
-use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
 /// The SVSM Calling Area (CAA)
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
@@ -121,60 +115,7 @@ pub extern "C" fn request_loop_main(cpu_index: usize) {
 
     let mut guest_regs = Vec::<GuestRegister>::new();
 
-    let mut count = 0;
     loop {
-        if count % 1000000 == 0 { // 定时动态检测
-            #[cfg(all(feature = "vtpm", not(test)))]{
-                let lmc_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
-                let mut vtpm = VTPM.lock();
-                let vvtpm: &mut Vtpm = &mut *vtpm;
-                // read the old lmc, compare it with the new one, and write the new one
-                let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-                // convert to lmc_u64 using a simple 8-byte conversion
-                let lmc_u64: u64 = if lmc_bytes.len() >= 8 {
-                    let arr: [u8; 8] = lmc_bytes[lmc_bytes.len() - 8 ..]
-                        .try_into()
-                        .unwrap_or([0u8; 8]);
-                    u64::from_ne_bytes(arr)
-                } else {
-                    log::error!("LMC NV length too small: {}", lmc_bytes.len());
-                    0u64
-                };
-
-                // Request and extract TMC via AttestationDriver when available.
-                #[cfg(feature = "attest")]
-                let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
-                    let mut driver = crate::attest::AttestationDriver::try_from(kbs_types::Tee::Snp).unwrap();
-                    match driver.resource() {
-                        Ok(secret) => {
-                            if secret.len() >= 8 {
-                                let tmc_vec = secret[secret.len() - 8 ..].to_vec();
-                                let tmc_u = extract_mc(&tmc_vec).unwrap_or(u64::from_ne_bytes(
-                                    tmc_vec.as_slice().try_into().unwrap_or([0u8; 8])
-                                ));
-                                (tmc_vec, tmc_u)
-                            } else {
-                                (Vec::new(), 0u64)
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Resource request failed: {:?}", e);
-                            (Vec::new(), 0u64)
-                        }
-                    }
-                };
-
-                #[cfg(feature = "attest")]
-                // let mut tmc_u64: u64 = u64::from_ne_bytes(*tmc_array);
-                if tmc_u64 > lmc_u64 + 1 {
-                    log::info!("[Cloning attack detected] Trusted-MC is {}, Local-MC is {}\n", &lmc_u64, &tmc_u64);
-                }else if tmc_u64 == lmc_u64 + 1 {
-                    log::info!("[Normal running] Trusted-MC is {}, Local-MC is {}\n", tmc_u64, lmc_u64);
-                    let tmc_array : [u8; 8] = tmc_bytes.as_slice().try_into().expect("tmc_bytes 长度必须恰好为 8 字节");
-                    tss::nvwrite(vvtpm, &lmc_index, &tmc_array).unwrap();
-                }
-            }
-        }
         // Attempt to enter the guest.  Once registers have been set, reset the
         // vector so they are not set again.
         let msg = enter_guest(guest_regs.as_slice());
@@ -189,7 +130,6 @@ pub extern "C" fn request_loop_main(cpu_index: usize) {
                 guest_regs = process_request(protocol, request, &mut params);
             }
         }
-        count = count+1;
     }
 }
 
@@ -209,7 +149,7 @@ fn process_request(protocol: u32, request: u32, params: &mut RequestParams) -> V
             panic!(
                 "Fatal error handling core protocol request {}: {:?}",
                 request, err
-            );
+            )
         }
     };
 
@@ -224,19 +164,19 @@ fn process_request(protocol: u32, request: u32, params: &mut RequestParams) -> V
     guest_regs
 }
 
-fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
-    let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
-    let param_area_start = if tag == 0x8002 {
-    // 带会话：跳过10B header + 4B parameterSize
-        10 + 4
-    } else {
-    // 无会话：header之后直接参数
-        10
-    };
+// fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
+//     let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
+//     let param_area_start = if tag == 0x8002 {
+//     // 带会话：跳过10B header + 4B parameterSize
+//         10 + 4
+//     } else {
+//     // 无会话：header之后直接参数
+//         10
+//     };
 
-    let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
-    let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
-    // convert to u64 (ne)
-    let array = nv_data.try_into().map_err(|_e| SvsmReqError::invalid_request())?;
-    Ok(u64::from_ne_bytes(array))
-}
+//     let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
+//     let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
+//     // convert to u64 (ne)
+//     let array = nv_data.try_into().map_err(|_e| SvsmReqError::invalid_request())?;
+//     Ok(u64::from_ne_bytes(array))
+// }
