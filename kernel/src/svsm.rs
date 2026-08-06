@@ -427,12 +427,6 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         Err(e) => log::info!("Failed to launch /init: {e:?}"),
     }
 
-    // Start request processing on this CPU if required.
-    if SVSM_PLATFORM.start_svsm_request_loop() {
-        start_kernel_task(request_loop_main, 0, String::from("request-loop on CPU 0"))
-            .expect("Failed to launch request loop task");
-    }
-
     #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
     {
         start_kernel_task(
@@ -441,6 +435,13 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             String::from("dynamic detection on CPU 0"),
         )
         .expect("Failed to launch dynamic detection task");
+    }
+
+
+    // Start request processing on this CPU if required.
+    if SVSM_PLATFORM.start_svsm_request_loop() {
+        start_kernel_task(request_loop_main, 0, String::from("request-loop on CPU 0"))
+            .expect("Failed to launch request loop task");
     }
 
     cpu_idle_loop(cpu_index);
@@ -459,66 +460,69 @@ pub extern "C" fn dynamic_detection_task(cpu_index: usize) {
     let lmc_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
     let mut count: u64 = 0;
 
-    log::debug!(
-        "dynamic_detection_task heartbeat on CPU {}: count={}",
-        cpu_index,
-        count
-    );
+    loop {
+        count = count.wrapping_add(1);
+        log::debug!(
+            "dynamic_detection_task heartbeat on CPU {}: count={}",
+            cpu_index,
+            count
+        );
 
-    let mut vtpm = VTPM.lock();
-    let vvtpm: &mut Vtpm = &mut *vtpm;
+        let mut vtpm = VTPM.lock();
+        let vvtpm: &mut Vtpm = &mut *vtpm;
 
-    let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-    let lmc_u64: u64 = if lmc_bytes.len() >= 8 {
-        let arr: [u8; 8] = lmc_bytes[lmc_bytes.len() - 8..]
-            .try_into()
-            .unwrap_or([0u8; 8]);
-        u64::from_ne_bytes(arr)
-    } else {
-        log::error!("LMC NV length too small: {}", lmc_bytes.len());
-        0u64
-    };
+        let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
+        let lmc_u64: u64 = if lmc_bytes.len() >= 8 {
+            let arr: [u8; 8] = lmc_bytes[lmc_bytes.len() - 8..]
+                .try_into()
+                .unwrap_or([0u8; 8]);
+            u64::from_ne_bytes(arr)
+        } else {
+            log::error!("LMC NV length too small: {}", lmc_bytes.len());
+            0u64
+        };
 
-    let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
-        let mut guard = ATTESTATION_DRIVER.lock();
-        let driver = guard
-            .as_mut()
-            .expect("Attestation driver has not been initialized");
-        match driver.resource() {
-            Ok(secret) => {
-                if secret.len() >= 8 {
-                    let tmc_vec = secret[secret.len() - 8..].to_vec();
-                    let tmc_u =
-                        u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
-                    (tmc_vec, tmc_u)
-                } else {
+        let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
+            let mut guard = ATTESTATION_DRIVER.lock();
+            let driver = guard
+                .as_mut()
+                .expect("Attestation driver has not been initialized");
+            match driver.resource() {
+                Ok(secret) => {
+                    if secret.len() >= 8 {
+                        let tmc_vec = secret[secret.len() - 8..].to_vec();
+                        let tmc_u =
+                            u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
+                        (tmc_vec, tmc_u)
+                    } else {
+                        (Vec::new(), 0u64)
+                    }
+                }
+                Err(e) => {
+                    log::error!("Resource request failed: {:?}", e);
                     (Vec::new(), 0u64)
                 }
             }
-            Err(e) => {
-                log::error!("Resource request failed: {:?}", e);
-                (Vec::new(), 0u64)
-            }
-        }
-    };
+        };
 
-    if tmc_u64 > lmc_u64 + 1 {
-        log::debug!(
-            "[Cloning attack detected] Trusted-MC is {}, Local-MC is {}\n",
-            &lmc_u64,
-            &tmc_u64,
-        );
-    } else if tmc_u64 == lmc_u64 + 1 {
-        log::debug!(
-            "[Normal running] Trusted-MC is {}, Local-MC is {}\n",
-            tmc_u64,
-            lmc_u64,
-        );
-        let tmc_array: [u8; 8] = tmc_bytes
-            .as_slice()
-            .try_into()
-            .expect("tmc_bytes 长度必须恰好为 8 字节");
-        tss::nvwrite(vvtpm, &lmc_index, &tmc_array).unwrap();
+        if tmc_u64 > lmc_u64 + 1 {
+            log::debug!(
+                "[Cloning attack detected] Trusted-MC is {}, Local-MC is {}\n",
+                &lmc_u64,
+                &tmc_u64,
+            );
+        } else if tmc_u64 == lmc_u64 + 1 {
+            log::debug!(
+                "[Normal running] Trusted-MC is {}, Local-MC is {}\n",
+                tmc_u64,
+                lmc_u64,
+            );
+            let tmc_array: [u8; 8] = tmc_bytes
+                .as_slice()
+                .try_into()
+                .expect("tmc_bytes 长度必须恰好为 8 字节");
+            tss::nvwrite(vvtpm, &lmc_index, &tmc_array).unwrap();
+        }
 
         schedule();
     }
