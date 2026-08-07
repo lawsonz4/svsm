@@ -23,6 +23,17 @@ use crate::protocols::{
     RequestParams, SVSM_APIC_PROTOCOL, SVSM_ATTEST_PROTOCOL, SVSM_CORE_PROTOCOL,
 };
 
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use crate::attest::ATTESTATION_DRIVER;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use crate::error::SvsmError;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use crate::vtpm::tcgtpm::tss;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use crate::vtpm::VTPM;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
+
 use alloc::vec::Vec;
 
 /// The SVSM Calling Area (CAA)
@@ -164,19 +175,119 @@ fn process_request(protocol: u32, request: u32, params: &mut RequestParams) -> V
     guest_regs
 }
 
-// fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
-//     let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
-//     let param_area_start = if tag == 0x8002 {
-//     // 带会话：跳过10B header + 4B parameterSize
-//         10 + 4
-//     } else {
-//     // 无会话：header之后直接参数
-//         10
-//     };
+// ===========================================================================
+// Dynamic Detection — runs inline in request_loop_main on every VMGEXIT
+// ===========================================================================
 
-//     let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
-//     let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
-//     // convert to u64 (ne)
-//     let array = nv_data.try_into().map_err(|_e| SvsmReqError::invalid_request())?;
-//     Ok(u64::from_ne_bytes(array))
-// }
+/// Set to false to silence all detection logs (panic still fires).
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+const DETECT_VERBOSE: bool = false;
+
+/// Wrapper: only emits log when DETECT_VERBOSE is true.
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+macro_rules! detect_log {
+    ($lvl:ident, $($arg:tt)*) => {
+        if DETECT_VERBOSE {
+            log::$lvl!($($arg)*);
+        }
+    };
+}
+
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+fn run_dynamic_detection(count: u64) {
+    let lmc_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
+
+    let mut vtpm = VTPM.lock();
+    let vvtpm: &mut Vtpm = &mut *vtpm;
+
+    let lmc_bytes = match tss::nvread(vvtpm, &lmc_index) {
+        Ok(b) => b,
+        Err(e) => {
+            detect_log!(info, "[detect] nvread failed (count={}): {:?}", count, e);
+            return;
+        }
+    };
+    let lmc_u64 = match extract_mc_req(&lmc_bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            detect_log!(info, "[detect] extract_mc failed (count={})", count);
+            return;
+        }
+    };
+
+    let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
+        let mut guard = ATTESTATION_DRIVER.lock();
+        let driver = match guard.as_mut() {
+            Some(d) => d,
+            None => {
+                detect_log!(info, "[detect] attestation driver not ready (count={})", count);
+                return;
+            }
+        };
+        match driver.resource() {
+            Ok(secret) => {
+                if secret.len() >= 8 {
+                    let tmc_vec = secret[secret.len() - 8..].to_vec();
+                    let tmc_u =
+                        u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
+                    (tmc_vec, tmc_u)
+                } else {
+                    detect_log!(warn, "[detect] secret too short (count={})", count);
+                    (Vec::new(), 0u64)
+                }
+            }
+            Err(e) => {
+                detect_log!(info, "[detect] resource request failed (count={}): {:?}", count, e);
+                (Vec::new(), 0u64)
+            }
+        }
+    };
+
+    if tmc_u64 > lmc_u64 + 1 {
+        panic!(
+            "[detect] ATTACK: Trusted-MC={}, Local-MC={} (count={})",
+            tmc_u64, lmc_u64, count
+        );
+    } else if tmc_u64 == lmc_u64 + 1 {
+        detect_log!(info,
+            "[detect] normal: TMC={}, LMC={} (count={})",
+            tmc_u64, lmc_u64, count
+        );
+        let tmc_array: [u8; 8] = tmc_bytes
+            .as_slice()
+            .try_into()
+            .expect("tmc_bytes must be exactly 8 bytes");
+        if let Err(e) = tss::nvwrite(vvtpm, &lmc_index, &tmc_array) {
+            detect_log!(error, "[detect] nvwrite failed (count={}): {:?}", count, e);
+        }
+    } else {
+        // Throttled: only log "no change" periodically when verbose
+        if DETECT_VERBOSE && count % 50 == 0 {
+            log::info!(
+                "[detect] no change (x{}): TMC={}, LMC={}",
+                count, tmc_u64, lmc_u64
+            );
+        }
+    }
+}
+
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+fn extract_mc_req(bytes: &Vec<u8>) -> Result<u64, SvsmError> {
+    let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
+    let param_area_start = if tag == 0x8002 {
+        // With session: skip 10B header + 4B parameterSize
+        10 + 4
+    } else {
+        // Without session: params right after header
+        10
+    };
+
+    let nv_len =
+        u16::from_be_bytes(bytes[param_area_start..param_area_start + 2].try_into().unwrap())
+            as usize;
+    let nv_data = &bytes[param_area_start + 2..param_area_start + 2 + nv_len];
+    let array: [u8; 8] = nv_data.try_into().map_err(|_e| SvsmError::InvalidBytes)?;
+    let val = u64::from_le_bytes(array);
+    detect_log!(info, "[detect] lmc_bytes={:02x?}, lmc_u64={}", array, val);
+    Ok(val)
+}

@@ -12,6 +12,17 @@ pub mod tcgtpm;
 
 extern crate alloc;
 
+/// Set to false to silence all [vtpm] logs.
+const DETECT_VERBOSE: bool = false;
+
+macro_rules! detect_log {
+    ($lvl:ident, $($arg:tt)*) => {
+        if DETECT_VERBOSE {
+            log::$lvl!($($arg)*);
+        }
+    };
+}
+
 use alloc::vec::Vec;
 use alloc::string::String;
 
@@ -120,13 +131,13 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     parse_getcap(&mut cap_resp, &mut is_lmc_defined, &lmc_index);
     match is_lmc_defined {
         Some(true) => {
-            log::info!("[vtpm] lmc 已定义，不是初次启动");
+            detect_log!(info, "[vtpm] lmc 已定义，不是初次启动");
         }
         Some(false) => {
-            log::info!("[vtpm] lmc 尚未定义，是初次启动");
+            detect_log!(info, "[vtpm] lmc 尚未定义，是初次启动");
         }
         _ => {
-            log::info!("[vtpm] parse error");
+            detect_log!(info, "[vtpm] parse error");
         }
     }
     
@@ -138,22 +149,20 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             let mut lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
             let mut tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
             if tmc_u64 > lmc_u64 +1 {
-                log::info!("[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
-                // let is_admin = verify_admin_passwd();
-                // if !is_admin{
+                detect_log!(info, "[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
                 return Err(SvsmReqError::invalid_request())
             }else{
-                log::info!("[vtpm] 正常非初次启动，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
+                detect_log!(info, "[vtpm] 正常非初次启动，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
                 _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
             }
         }
         Some(false) => {
-            log::info!("[vtpm] 正常初次启动，register lmc equals[{:?}] into the cvm", &tmc_array);
+            detect_log!(info, "[vtpm] 正常初次启动，register lmc equals[{:?}] into the cvm", &tmc_array);
             let _ = tss::nvdefine(vvtpm, &lmc_index, &"rw");
             _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
         }
         _ => {
-            log::info!("[vtpm] parse error");
+            detect_log!(info, "[vtpm] parse error");
         }
     }
     // post check (nvindex situation)
@@ -217,21 +226,21 @@ fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined :&mut Option<bool>, check_
     const BOUND:usize = 19;
 
     if cap_stream.len() < BOUND{
-        log::info!("[vtpm-parse-getcap] insufficient getcap resp length, error!");
+        detect_log!(info, "[vtpm-parse-getcap] insufficient getcap resp length, error!");
         return
     }else if cap_stream.len() == BOUND{
-        log::info!("[vtpm-parse-getcap] no payload!");
+        detect_log!(info, "[vtpm-parse-getcap] no payload!");
         return
     }
 
     let index_count = cap_stream[15..BOUND].to_vec();
     let num = u32::from_be_bytes(index_count.try_into().unwrap());
     let rest = cap_stream.split_off(BOUND);
-    log::info!("[vtpm-parse-getcap] nv_index_num is {}, data area is {:02x?}" , num, rest);
+    detect_log!(info, "[vtpm-parse-getcap] nv_index_num is {}, data area is {:02x?}" , num, rest);
     for chunk in rest.chunks_exact(4) {
         let old_index: Vec<u8> = chunk.try_into().unwrap();
         if old_index == *check_index {
-            log::info!("[vtpm-parse-getcap] index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
+            detect_log!(info, "[vtpm-parse-getcap] index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
             if is_defined.is_some() {
                *is_defined = Some(true);
             }

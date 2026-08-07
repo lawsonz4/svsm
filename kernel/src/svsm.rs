@@ -46,7 +46,6 @@ use svsm::mm::ro_after_init::make_ro_after_init;
 use svsm::mm::virtualrange::virt_log_usage;
 use svsm::mm::{init_kernel_mapping_info, FixedAddressMappingRange};
 use svsm::platform;
-use svsm::error::SvsmError;
 use svsm::platform::{init_capabilities, init_platform_type, SvsmPlatformCell, SVSM_PLATFORM};
 #[cfg(all(feature = "uefivars", not(test)))]
 use svsm::protocols::uefivars::uefi_mm_protocol_init;
@@ -54,7 +53,7 @@ use svsm::requests::request_loop_main;
 use svsm::sev::secrets_page_mut;
 use svsm::svsm_paging::{init_page_table, invalidate_early_boot_memory};
 use svsm::task::schedule_init;
-use svsm::task::{exec_user, schedule, set_affinity, start_kernel_task, start_kernel_thread};
+use svsm::task::{exec_user, start_kernel_task};
 use svsm::types::PAGE_SIZE;
 use svsm::utils::{immut_after_init::ImmutAfterInitCell, zero_mem_region, MemoryRegion};
 #[cfg(all(feature = "vtpm", not(test)))]
@@ -63,18 +62,20 @@ use svsm::vtpm::vtpm_init;
 use svsm::mm::validate::{init_valid_bitmap_ptr, migrate_valid_bitmap};
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use release::COCONUT_VERSION;
 
 #[cfg(feature = "attest")]
 use kbs_types::Tee;
+/// Set to false to silence all [svsm-main], [svsm] logs.
+const DETECT_VERBOSE: bool = false;
 
-#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-use svsm::vtpm::tcgtpm::tss;
-#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-use svsm::vtpm::tcgtpm::TcgTpm as Vtpm;
-#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-use svsm::vtpm::VTPM;
+macro_rules! detect_log {
+    ($lvl:ident, $($arg:tt)*) => {
+        if DETECT_VERBOSE {
+            log::$lvl!($($arg)*);
+        }
+    };
+}
 
 extern "C" {
     static bsp_stack: u8;
@@ -371,11 +372,11 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         {
             let mut driver = AttestationDriver::try_from(Tee::Snp).unwrap();
             let secret = driver.attest().expect("Remote attestation failed");
-            log::info!("[svsm-main] The injected secret and tmc is\n{:?}", secret);
+            detect_log!(info, "[svsm-main] The injected secret and tmc is\n{:?}", secret);
 
             let key_bytes = &secret[..secret.len() - 8];
             tmc_array = (secret[secret.len() - 8..]).try_into().unwrap();
-            log::info!(
+            detect_log!(info,
                 "[svsm] key bytes is:\n{:?}\ntmc bytes is:\n{:?}",
                 key_bytes,
                 tmc_array
@@ -420,22 +421,6 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         crate::test_main();
     }
 
-    #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-    {
-        let detection_cpu = if PERCPU_AREAS.len() > 1 { 1 } else { 0 };
-        log::info!(
-            "Starting dynamic detection task with target CPU {} (PERCPU count={})",
-            detection_cpu,
-            PERCPU_AREAS.len()
-        );
-        start_kernel_task(
-            dynamic_detection_task,
-            detection_cpu,
-            String::from("dynamic-detection"),
-        )
-        .expect("Failed to launch dynamic detection task");
-    }
-
     match exec_user("/init", opendir("/").expect("Failed to find FS root")) {
         Ok(_) => (),
         Err(e) => log::info!("Failed to launch /init: {e:?}"),
@@ -448,88 +433,6 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     }
 
     cpu_idle_loop(cpu_index);
-}
-
-#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-pub extern "C" fn dynamic_detection_task(cpu_index: usize) {
-    log::info!("[dynamic] Launching dynamic detection task on CPU {}", cpu_index);
-
-    if cpu_index != 0 {
-        set_affinity(cpu_index);
-    }
-
-    debug_assert_eq!(cpu_index, this_cpu().get_cpu_index());
-
-    let lmc_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
-    let mut count: u64 = 0;
-
-    loop {
-        count = count.wrapping_add(1);
-        log::debug!(
-            "[dynamic] dynamic_detection_task heartbeat on CPU {}: count={}",
-            cpu_index,
-            count
-        );
-
-        let mut vtpm = VTPM.lock();
-        let vvtpm: &mut Vtpm = &mut *vtpm;
-
-        let lmc_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-        let lmc_u64 = extract_mc(&lmc_bytes).unwrap();
-
-        let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
-            let mut guard = ATTESTATION_DRIVER.lock();
-            let driver = guard
-                .as_mut()
-                .expect("Attestation driver has not been initialized");
-            match driver.resource() {
-                Ok(secret) => {
-                    if secret.len() >= 8 {
-                        log::info!("lawson777");
-                        let tmc_vec = secret[secret.len() - 8..].to_vec();
-                        let tmc_u =
-                            u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
-                        (tmc_vec, tmc_u)
-                    } else {
-                        log::info!("lawson888");
-                        (Vec::new(), 0u64)
-                    }
-                }
-                Err(e) => {
-                    log::error!("Resource request failed: {:?}", e);
-                    (Vec::new(), 0u64)
-                }
-            }
-        };
-        log::info!("lawson999");
-        if tmc_u64 > lmc_u64 + 1 {
-            panic!(
-                "[dynamic] attack, Trusted-MC is {}, Local-MC is {}",
-                tmc_u64,
-                lmc_u64,
-            );
-        } else if tmc_u64 == lmc_u64 + 1 {
-            log::info!("lawson222");
-            log::info!(
-                "[dynamic] normal, Trusted-MC is {}, Local-MC is {}\n",
-                tmc_u64,
-                lmc_u64,
-            );
-            let tmc_array: [u8; 8] = tmc_bytes
-                .as_slice()
-                .try_into()
-                .expect("tmc_bytes 长度必须恰好为 8 字节");
-            tss::nvwrite(vvtpm, &lmc_index, &tmc_array).unwrap();
-        } else {
-            panic!(
-                "[dynamic] unexpected error, tmc is {}, lmc is {}",
-                tmc_u64,
-                lmc_u64,
-            );
-        }
-
-        schedule();
-    }
 }
 
 #[panic_handler]
@@ -556,26 +459,4 @@ fn panic(info: &PanicInfo<'_>) -> ! {
         debug_break();
         platform::halt();
     }
-}
-
-fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmError> {
-    let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
-    let param_area_start = if tag == 0x8002 {
-    // 带会话：跳过10B header + 4B parameterSize
-        10 + 4
-    } else {
-    // 无会话：header之后直接参数
-        10
-    };
-
-    let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
-    let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
-    // convert to u64 (le)
-    let array: [u8; 8] = nv_data.try_into().map_err(|_e| SvsmError::InvalidBytes)?;
-    log::info!(
-        "[dynamic] lmc_bytes is {:02x?}, lmc_u64 is {}",
-        array,
-        u64::from_le_bytes(array.clone()),
-    );
-    Ok(u64::from_le_bytes(array))
 }
