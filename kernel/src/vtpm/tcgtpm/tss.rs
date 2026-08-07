@@ -156,7 +156,7 @@ fn flushctx_cmd() -> Vec<u8>{
     cmd
 }
 
-fn nvdefine_cmd(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
+fn nvdefine_cmd_8bytes(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
     // 整体结构：header-TPMI_RH_PROVISION-TPM2B_AUTH-TPM2B_NV_PUBLIC
 
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
@@ -186,7 +186,7 @@ fn nvdefine_cmd(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
                 0x00, 0x0b, // nameALG=SHA256
                 0x00, 0x02, 0x00, 0x42,// 属性：extend(0x42's 4) | ownerread | ownerwrite
                 0x00, 0x00, // AuthPolicy
-                0x00, 0x20 // datasize   
+                0x00, 0x08 // datasize   
         ]);
     }
     "counter" => {
@@ -236,7 +236,7 @@ fn nvextend_cmd(index :&Vec<u8>) -> Vec<u8>{
     return cmd
 }
 
-fn nvread_cmd(index :&Vec<u8>) -> Vec<u8>{
+fn nvread_cmd_8bytes(index :&Vec<u8>) -> Vec<u8>{
     // 整体结构：header-TPMI_RH_NV_AUTH-TPMI_RH_NV_INDEX-size-offset
 
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
@@ -256,7 +256,7 @@ fn nvread_cmd(index :&Vec<u8>) -> Vec<u8>{
     return cmd
 }
 
-fn nvwrite_cmd(index: &Vec<u8>, data: &[u8; 8]) -> Vec<u8>{
+fn nvwrite_cmd_8bytes(index: &Vec<u8>, data: &[u8; 8]) -> Vec<u8>{
     // 整体结构：header-TPMI_RH_NV_AUTH-TPMI_RH_NV_INDEX-TPM2B_MAX_NV_BUFFER-UINT16
     
     let mut cmd = Vec::<u8>::with_capacity(TPM_BUFFER_MAX_SIZE);
@@ -462,7 +462,7 @@ pub fn getcap<T: TcgTpmSimulatorInterface>(
 pub fn nvdefine<T: TcgTpmSimulatorInterface>(
     vtpm: &T, index : &Vec<u8>, nvtype: &str
 ) -> Result<Vec<u8>, SvsmVTpmError> {
-    let mut cmd = nvdefine_cmd(&index, &nvtype);
+    let mut cmd = nvdefine_cmd_8bytes(&index, &nvtype);
     let resp = checked_send(vtpm, &mut cmd, true)?;
     // Get size (UINT16) of TPMT_PUBLIC at offset 18.
     // Note this is output from the TPM, so its value is trusted.
@@ -488,7 +488,7 @@ pub fn nvincrement<T: TcgTpmSimulatorInterface>(
 pub fn nvwrite<T: TcgTpmSimulatorInterface>(
     vtpm: &T, index: &Vec<u8>, data: &[u8; 8]
 ) -> Result<Vec<u8>, SvsmVTpmError> {
-    let mut cmd = nvwrite_cmd(index, data);
+    let mut cmd = nvwrite_cmd_8bytes(index, data);
     let resp = checked_send(vtpm, &mut cmd, true)?;
     Ok(resp)
 }
@@ -496,7 +496,7 @@ pub fn nvwrite<T: TcgTpmSimulatorInterface>(
 pub fn nvread<T: TcgTpmSimulatorInterface>(
     vtpm: &T, index: &Vec<u8>
 ) -> Result<Vec<u8>, SvsmVTpmError> {
-    let mut cmd = nvread_cmd(index);
+    let mut cmd = nvread_cmd_8bytes(index);
     let resp = checked_send(vtpm, &mut cmd, true)?;
     Ok(resp)
 }

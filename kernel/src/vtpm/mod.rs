@@ -134,9 +134,9 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     match is_lmc_defined{
         Some(true) => {
             // read the old lmc, compare it with the new one, and write the new one
-            let resp_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-            let mut lmc_u64: u64 = extract_mc(&resp_bytes).unwrap();
-            let mut tmc_u64: u64 = u64::from_ne_bytes(*tmc_array);
+            let nv_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
+            let mut lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
+            let mut tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
             if tmc_u64 > lmc_u64 +1 {
                 log::info!("[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
                 // let is_admin = verify_admin_passwd();
@@ -148,7 +148,7 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             }
         }
         Some(false) => {
-            log::info!("[vtpm] 正常初次启动，register lmc[{:?}] into the cvm", &tmc_array);
+            log::info!("[vtpm] 正常初次启动，register lmc equals[{:?}] into the cvm", &tmc_array);
             let _ = tss::nvdefine(vvtpm, &lmc_index, &"rw");
             _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
         }
@@ -156,7 +156,7 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             log::info!("[vtpm] parse error");
         }
     }
-    // post (nvindex situation) check
+    // post check (nvindex situation)
     // property = [0x01, 0x00, 0x00, 0x00].to_vec();
     // cap_stream = tss::getcap(vvtpm, &property)?;
     // parse_getcap(&mut cap_stream, &mut None, &extend_index, &mut None, &counter_index);
@@ -196,9 +196,9 @@ fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
 
     let nv_len = u16::from_be_bytes(bytes[param_area_start..param_area_start+2].try_into().unwrap()) as usize;
     let nv_data = &bytes[param_area_start+2 .. param_area_start+2 + nv_len];
-    // convert to u64 (ne)
+    // convert to u64 (le)
     let array = nv_data.try_into().map_err(|_e| SvsmReqError::invalid_request())?;
-    Ok(u64::from_ne_bytes(array))
+    Ok(u64::from_le_bytes(array))
 }
 
 
