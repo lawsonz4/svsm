@@ -6,18 +6,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use crate::attest::ATTESTATION_DRIVER;
-use crate::error::SvsmError;
-use crate::protocols::errors::SvsmReqError;
-use crate::protocols::RequestParams;
-use crate::vtpm::tcgtpm::tss;
-use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
-use crate::vtpm::VTPM;
-
-const SVSM_DETECT_DO_CHECK: u32 = 0;
-
-/// Set to false to silence all detection logs (panic still fires).
-const DETECT_VERBOSE: bool = false;
+/// Local verbose switch: true = print all [detect] logs (default on).
+const DETECT_VERBOSE: bool = true;
 
 macro_rules! detect_log {
     ($lvl:ident, $($arg:tt)*) => {
@@ -27,30 +17,36 @@ macro_rules! detect_log {
     };
 }
 
-#[allow(non_upper_case_globals)]
-static mut detect_count: u64 = 0;
+use crate::attest::ATTESTATION_DRIVER;
+use crate::error::SvsmError;
+use crate::protocols::errors::SvsmReqError;
+use crate::protocols::RequestParams;
+use crate::vtpm::tcgtpm::tss;
+use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
+use crate::vtpm::VTPM;
 
-pub fn detect_protocol_request(
-    request: u32,
-    _params: &mut RequestParams,
-) -> Result<(), SvsmReqError> {
-    match request {
-        SVSM_DETECT_DO_CHECK => {
-            do_dynamic_check();
-            Ok(())
-        }
-        _ => Err(SvsmReqError::unsupported_call()),
-    }
+// const SVSM_DETECT_DO_CHECK: u32 = 0;
+
+// Called from vtpm_command_request when CC == TPM_CC_MyCmd (Switch to custom protocol later)
+// pub fn detect_protocol_request(
+//     request: u32,
+//     _params: &mut RequestParams,
+// ) -> Result<(), SvsmReqError> {
+//     match request {
+//         SVSM_DETECT_DO_CHECK => {
+//             do_dynamic_detection();
+//             Ok(())
+//         }
+//         _ => Err(SvsmReqError::unsupported_call()),
+//     }
+// }
+
+pub fn trigger_dynamic_detection() {
+    detect_log!(info, "[detect] dynamic detection called");
+    do_dynamic_detection();
 }
 
-/// Called from vtpm_command_request when CC == TPM_CC_GetRandom
-pub fn trigger_on_getrandom() {
-    do_dynamic_check();
-}
-
-fn do_dynamic_check() {
-    unsafe { detect_count = detect_count.wrapping_add(1) };
-    let count = unsafe { detect_count };
+fn do_dynamic_detection() {
     let lmc_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
 
     // Step 1: read LMC (fast, release VTPM lock immediately)
@@ -60,14 +56,14 @@ fn do_dynamic_check() {
         let lmc_bytes = match tss::nvread(vvtpm, &lmc_index) {
             Ok(b) => b,
             Err(e) => {
-                detect_log!(info, "[detect] nvread failed (count={}): {:?}", count, e);
+                detect_log!(info, "[detect] nvread failed: {:?}", e);
                 return;
             }
         };
         match extract_mc(&lmc_bytes) {
             Ok(v) => v,
             Err(_) => {
-                detect_log!(info, "[detect] extract_mc failed (count={})", count);
+                detect_log!(info, "[detect] extract_mc failed");
                 return;
             }
         }
@@ -79,7 +75,7 @@ fn do_dynamic_check() {
         let driver = match guard.as_mut() {
             Some(d) => d,
             None => {
-                detect_log!(info, "[detect] attestation driver not ready (count={})", count);
+                detect_log!(info, "[detect] attestation driver not ready");
                 return;
             }
         };
@@ -91,12 +87,12 @@ fn do_dynamic_check() {
                         u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
                     (tmc_vec, tmc_u)
                 } else {
-                    detect_log!(warn, "[detect] secret too short (count={})", count);
+                    detect_log!(warn, "[detect] secret too short");
                     (Vec::new(), 0u64)
                 }
             }
             Err(e) => {
-                detect_log!(info, "[detect] resource request failed (count={}): {:?}", count, e);
+                detect_log!(info, "[detect] resource request failed: {:?}", e);
                 (Vec::new(), 0u64)
             }
         }
@@ -107,25 +103,24 @@ fn do_dynamic_check() {
     let vvtpm: &mut Vtpm = &mut *vtpm;
     if tmc_u64 > lmc_u64 + 1 {
         panic!(
-            "[detect] ATTACK: Trusted-MC={}, Local-MC={} (count={})",
-            tmc_u64, lmc_u64, count
+            "[detect] ATTACK: Trusted-MC={}, Local-MC={}",
+            tmc_u64, lmc_u64
         );
     } else if tmc_u64 == lmc_u64 + 1 {
         detect_log!(info,
-            "[detect] normal: TMC={}, LMC={} (count={})",
-            tmc_u64, lmc_u64, count
+            "[detect] normal: TMC={}, LMC={}",
+            tmc_u64, lmc_u64
         );
         let tmc_array: [u8; 8] = tmc_bytes
             .as_slice()
             .try_into()
             .expect("tmc_bytes must be exactly 8 bytes");
         if let Err(e) = tss::nvwrite(vvtpm, &lmc_index, &tmc_array) {
-            detect_log!(error, "[detect] nvwrite failed (count={}): {:?}", count, e);
+            detect_log!(error, "[detect] nvwrite failed: {:?}", e);
         }
-    } else if DETECT_VERBOSE && count % 50 == 0 {
-        log::info!(
-            "[detect] no change (x{}): TMC={}, LMC={}",
-            count, tmc_u64, lmc_u64
+    } else {
+        detect_log!(info, "[detect] no change: TMC={}, LMC={}",
+            tmc_u64, lmc_u64
         );
     }
 }
@@ -142,8 +137,8 @@ fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmError> {
         u16::from_be_bytes(bytes[param_area_start..param_area_start + 2].try_into().unwrap())
             as usize;
     let nv_data = &bytes[param_area_start + 2..param_area_start + 2 + nv_len];
-    let array: [u8; 8] = nv_data.try_into().map_err(|_e| SvsmError::InvalidBytes)?;
-    let val = u64::from_le_bytes(array);
-    detect_log!(info, "[detect] lmc_bytes={:02x?}, lmc_u64={}", array, val);
+    let nv_array: [u8; 8] = nv_data.try_into().map_err(|_e| SvsmError::InvalidBytes)?;
+    let val = u64::from_le_bytes(nv_array);
+    detect_log!(info, "[detect] lmc_bytes is {:02x?}, lmc_u64 is {}", nv_array, val);
     Ok(val)
 }

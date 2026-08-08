@@ -66,16 +66,6 @@ use release::COCONUT_VERSION;
 
 #[cfg(feature = "attest")]
 use kbs_types::Tee;
-/// Set to false to silence all [svsm-main], [svsm] logs.
-const DETECT_VERBOSE: bool = false;
-
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
 
 extern "C" {
     static bsp_stack: u8;
@@ -365,19 +355,18 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
         panic!("Failed to prepare guest FW: {e:#?}");
     }
 
-    // Load the encryption key (and tmc)
-    let tmc_array: [u8; 8];
-    let key: Option<_> = {
+    // Decrypt the key and tmc
+    let (key, tmc_array): (Option<_>, [u8; 8]) = {
         #[cfg(feature = "attest")]
         {
+            use svsm::verbose_log;
+
             let mut driver = AttestationDriver::try_from(Tee::Snp).unwrap();
             let secret = driver.attest().expect("Remote attestation failed");
-            detect_log!(info, "[svsm-main] The injected secret and tmc is\n{:?}", secret);
-
             let key_bytes = &secret[..secret.len() - 8];
-            tmc_array = (secret[secret.len() - 8..]).try_into().unwrap();
-            detect_log!(info,
-                "[svsm] key bytes is:\n{:?}\ntmc bytes is:\n{:?}",
+            let tmc_array = (secret[secret.len() - 8..]).try_into().unwrap();
+            verbose_log!(info,
+                "[svsm-main] key bytes is: {:?}, tmc bytes is: {:?}",
                 key_bytes,
                 tmc_array
             );
@@ -386,12 +375,12 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
             xts_key[..64].copy_from_slice(key_bytes);
 
             ATTESTATION_DRIVER.lock().replace(driver);
-            Some(xts_key)
+            (Some(xts_key), tmc_array)
         }
 
         #[cfg(not(feature = "attest"))]
         {
-            None
+            (None, [0u8; 8])
         }
     };
 

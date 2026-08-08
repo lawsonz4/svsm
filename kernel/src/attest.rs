@@ -7,17 +7,7 @@
 
 extern crate alloc;
 
-/// Set to false to silence all [svsm], [svsm-driver], [runtimedata-hash-debug] logs.
-const DETECT_VERBOSE: bool = false;
-
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
-
+use crate::verbose_log;
 use crate::{
     error::SvsmError,
     greq::{pld_report::*, services::get_regular_report},
@@ -98,13 +88,13 @@ impl AttestationDriver<'_> {
             version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
-        detect_log!(info, "[svsm-driver] NegotiationRequest is:\n{:#?}", &req);
+        verbose_log!(info, "[AttestationDriver] NegotiationRequest is:\n{:#?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
 
         let resp = serde_json::from_slice(&payload).or(Err(AttestationError::NegotiationDeserialize));
-        detect_log!(info, "[svsm-driver] NegotiationResponse is:\n{:#?}", &resp);
+        verbose_log!(info, "[AttestationDriver] NegotiationResponse is:\n{:#?}", &resp);
         resp
     }
 
@@ -135,34 +125,33 @@ impl AttestationDriver<'_> {
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
-        detect_log!(info, "[svsm] AttestationRequest is:\n{:?}", &req);
+        verbose_log!(info, "[AttestationDriver] AttestationRequest is:\n{:#?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
-        let response: AttestationResponse = serde_json::from_slice(&payload)
+        let resp: AttestationResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        detect_log!(info, "[svsm] AttestationResponse (before decryption) is:\n{:?}", &response);
+        verbose_log!(info, "[AttestationDriver] AttestationResponse (chipertext) is:\n{:#?}", &resp);
 
-        if !response.success {
+
+        // check
+        if !resp.success {
             return Err(AttestationError::Failed);
         }
-
-        let Some(decryption) = response.decryption else {
+        let Some(decryption) = resp.decryption else {
             return Err(AttestationError::PublicKeyMissing)?;
         };
-
-        let Some(mut secret) = response.secret else {
+        let Some(mut secret) = resp.secret else {
             return Err(AttestationError::SecretMissing);
         };
 
+        // secret resource containing key and tmc
         self.decrypt(&mut secret, decryption)?;
-        detect_log!(info, "[svsm] The final secret got from the kbs is:\n{:?}", &secret);
 
-        let tmc_bytes = &secret[secret.len() - 8 .. ];
-        detect_log!(info, "[svsm] tmc bytes is:\n{:?}", &tmc_bytes);
-        let tmc_bytes: [u8; 8] = tmc_bytes.try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
-        let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
-        detect_log!(info, "[svsm] received tmc is:\n{}", tmc);
+        // let tmc_bytes = &secret[secret.len() - 8 .. ];
+        // let tmc_bytes: [u8; 8] = tmc_bytes.try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
+        // let tmc: u64 = u64::from_ne_bytes(tmc_bytes).try_into().map_err(|_e| AttestationError::InvalidTmcBytes)?;
+        // verbose_log!(info, "[AttestationDriver] Decrypted secret and tmc are:\n({:?}, {:?})", &secret, tmc);
         Ok(secret)
     }
 
@@ -170,28 +159,26 @@ impl AttestationDriver<'_> {
         let request = ResourceRequest {
             token: AttestationToken::Jwt(String::new()),
         };
-        detect_log!(info, "[svsm] ResourceRequest is:\n{:?}", &request);
+        verbose_log!(info, "[DynamicDetectionDriver] ResourceRequest is:\n{:#?}", &request);
 
         self.write(request)?;
         let payload = self.read()?;
-        let response: ResourceResponse = serde_json::from_slice(&payload)
+        let resp: ResourceResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        detect_log!(info, "[svsm] ResourceResponse (before decryption) is:\n{:?}", &response);
+        verbose_log!(info, "[DynamicDetectionDriver] ResourceResponse (chipertext) is:\n{:#?}", &resp);
 
-        if !response.success {
+        if !resp.success {
             return Err(AttestationError::Failed);
         }
 
-        let Some(decryption) = response.decryption else {
+        let Some(decryption) = resp.decryption else {
             return Err(AttestationError::PublicKeyMissing)?;
         };
-
-        let Some(mut secret) = response.secret else {
+        let Some(mut secret) = resp.secret else {
             return Err(AttestationError::SecretMissing);
         };
-
         self.decrypt(&mut secret, decryption)?;
-        detect_log!(info, "[svsm] Resource secret before return:\n{:?}", &secret);
+        // verbose_log!(info, "[DynamicDetectionDriver] Resource secret before return:\n{:?}", &secret);
         Ok(secret)
     }
 
@@ -253,7 +240,7 @@ impl AttestationDriver<'_> {
 
             usize::from_ne_bytes(bytes)
         };
-        detect_log!(info, "[svsm-driver] read {} bytes from aproxy", &len);
+        verbose_log!(info, "[svsm->driver] read {} bytes from aproxy", &len);
 
         let mut buf: Vec<u8> = vec_sized(len).or(Err(AttestationError::VecAlloc))?;
 
@@ -267,7 +254,7 @@ impl AttestationDriver<'_> {
     /// Write attestation data over the serial port.
     fn write(&mut self, param: impl Serialize) -> Result<(), AttestationError> {
         let bytes = serde_json::to_vec(&param).or(Err(AttestationError::NegotiationSerialize))?;
-        detect_log!(info, "[svsm-driver] write {} bytes to aproxy", bytes.len());
+        verbose_log!(info, "[driver->svsm] write {} bytes to aproxy", bytes.len());
 
         // The receiving party is unaware of how many bytes to read from the port. Write an 8-byte
         // header indicating the length of the buffer before writing the buffer itself.
@@ -407,7 +394,6 @@ fn hash(
             NegotiationParam::EcPublicKeyBytes => {
                 sha.update(&*pub_key.x.buffer);
                 sha.update(&*pub_key.y.buffer);
-                detect_log!(info, "[runtimedata-hash-debug] pub_key.x is \n:{:?}\npub_key.y is \n:{:?}", &pub_key.x.buffer, &pub_key.y.buffer);
             }
             NegotiationParam::Base64StdBytes(s) => {
                 let decoded = BASE64_STANDARD
@@ -415,12 +401,9 @@ fn hash(
                     .map_err(|_| AttestationError::NegotiationDeserialize)?;
 
                 sha.update(&decoded);
-                detect_log!(info, "[runtimedata-hash-debug] decode nonce is\n:{:?}", &decoded)
             }
         }
     }
     let digest = sha.finalize();
-    detect_log!(info, "[runtimedata-hash-debug] computed runtimedata digest is:\n{:?}", &digest);
-
     try_to_vec(&digest).or(Err(AttestationError::VecAlloc))
 }

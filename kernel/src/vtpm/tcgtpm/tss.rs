@@ -9,23 +9,13 @@
 
 extern crate alloc;
 
-/// Set to false to silence all [vtpm-stream], [vtpm-nvdefine] logs.
-const DETECT_VERBOSE: bool = false;
-
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
-
 use crate::protocols::errors::SvsmReqError;
 use crate::vtpm::{
     tcgtpm::{TcgTpmSimulatorInterface, TPM_BUFFER_MAX_SIZE},
     SvsmVTpmError,
 };
 use alloc::vec::Vec;
+use crate::verbose_log;
 
 pub const TPM_RC_SUCCESS: u32 = 0;
 
@@ -218,7 +208,7 @@ fn nvdefine_cmd_8bytes(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
         ]);
     }
     _ =>{
-        detect_log!(info, "[vtpm-nvdefine] nvdefinespace type mismatch")
+        log::info!("[vtpm-nvdefine] nvdefinespace type mismatch")
     }
 }
     cmd
@@ -398,18 +388,18 @@ pub fn checked_send<T: TcgTpmSimulatorInterface>(
         }
     }
 
-    detect_log!(info, "[vtpm-stream] cmd [CC={}] request is {:02x?}", &cc, &cmd);
+    verbose_log!(info, "[vtpm-stream] cmd [CC={}] request is {:02x?}", &cc, &cmd);
     let resp = vtpm
         .send_tpm_command(&cmd[..command_size], 0)
         .map_err(|_| SvsmVTpmError::ReqError(SvsmReqError::invalid_request()))?;
-    detect_log!(info, "[vtpm-stream] cmd [CC={}] resp is: {:02x?}", &cc, resp);
+    verbose_log!(info, "[vtpm-stream] cmd [CC={}] resp is: {:02x?}", &cc, resp);
 
     let rc = tpm_cmd_rc(&resp);
     if rc != TPM_RC_SUCCESS {
-        detect_log!(info, "[vtpm-stream] cmd [CC={}] execution fail", &cc);
+        verbose_log!(info, "[vtpm-stream] cmd [CC={}] execution fail", &cc);
         return Err(SvsmVTpmError::CommandError(rc));
     }
-    detect_log!(info, "[vtpm-stream] cmd [CC={}] execution success", &cc);
+    verbose_log!(info, "[vtpm-stream] cmd [CC={}] execution success", &cc);
     Ok(resp)
 }
 

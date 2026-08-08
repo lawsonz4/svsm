@@ -5,6 +5,16 @@
 // Author: Stefano Garzarella <sgarzare@redhat.com>
 // Author: Tyler Fanelli <tfanelli@redhat.com>
 
+const DETECT_VERBOSE: bool = false;
+
+macro_rules! apxy_log {
+    ($($arg:tt)*) => {
+        if $crate::DETECT_VERBOSE {
+            println!($($arg)*);
+        }
+    };
+}
+
 mod attest;
 mod backend;
 
@@ -47,7 +57,7 @@ fn main() -> anyhow::Result<()> {
         match stream {
             Ok(mut stream) => {
                 let mut http_client = backend::HttpClient::new(args.url.clone(), args.backend)?;
-                println!("[aproxy-server] http client info is:\n{:#?}", &http_client);
+                apxy_log!("[aproxy] http client info is:\n{:#?}", &http_client);
 
                 // Keep reading generic payloads and dispatch by trying to deserialize
                 // into known request types. The first successful deserialization
@@ -57,15 +67,15 @@ fn main() -> anyhow::Result<()> {
                     let payload = match attest::proxy_read(&mut stream) {
                         Ok(p) => p,
                         Err(e) => {
-                            println!("[aproxy-server] session end or read error: {:?}", e);
+                            apxy_log!("[aproxy] session end or read error: {:?}", e);
                             break;
                         }
                     };
                     // Resource?
                     if let Ok(req) = serde_json::from_slice::<libaproxy::ResourceRequest>(&payload) {
-                        println!("[aproxy-server] ResourceRequest struct from svsm is:\n{:?}", &req);
+                        apxy_log!("[aproxy] ResourceRequest struct from svsm is:\n{:?}", &req);
                         let response = http_client.resource(req)?;
-                        println!("[aproxy-server] ResourceResponse struct from protocol is:\n{:?}", &response);
+                        apxy_log!("[aproxy] ResourceResponse struct from protocol is:\n{:?}", &response);
                         attest::proxy_write(&mut stream, response)?;
                         continue;
                     }
@@ -84,7 +94,7 @@ fn main() -> anyhow::Result<()> {
 
 
 
-                    println!("[aproxy-server] Unknown request payload received: {:?}", &payload);
+                    apxy_log!("[aproxy] Unknown request payload received: {:?}", &payload);
                 }
             }
             Err(_) => {

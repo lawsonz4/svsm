@@ -12,17 +12,7 @@ pub mod tcgtpm;
 
 extern crate alloc;
 
-/// Set to false to silence all [vtpm] logs.
-const DETECT_VERBOSE: bool = false;
-
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
-
+use crate::verbose_log;
 use alloc::vec::Vec;
 use alloc::string::String;
 
@@ -31,6 +21,18 @@ use crate::vtpm::tcgtpm::tss;
 
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
+
+/// Local verbose switch: true = print all [detect] logs (default on).
+const DETECT_VERBOSE: bool = true;
+
+#[cfg(feature = "attest")]
+macro_rules! detect_log {
+    ($lvl:ident, $($arg:tt)*) => {
+        if DETECT_VERBOSE {
+            log::$lvl!($($arg)*);
+        }
+    };
+}
 
 /// Basic services required to perform the VTPM Protocol
 pub trait VtpmProtocolInterface {
@@ -125,23 +127,23 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     let  property = [0x01, 0x00, 0x00, 0x00].to_vec();
     let mut cap_resp = tss::getcap(vvtpm, &property)?;
 
-    // 检查lmc是否已定义（是否初次启动）
+    // Check if LMC is already defined (first boot vs reboot)
     let mut is_lmc_defined: Option<bool> = Some(false);
     let lmc_index:Vec<u8> = [0x01, 0xc0, 0x00, 0x01].to_vec();
     parse_getcap(&mut cap_resp, &mut is_lmc_defined, &lmc_index);
     match is_lmc_defined {
         Some(true) => {
-            detect_log!(info, "[vtpm] lmc 已定义，不是初次启动");
+            detect_log!(info, "[vtpm] LMC already defined, not first boot");
         }
         Some(false) => {
-            detect_log!(info, "[vtpm] lmc 尚未定义，是初次启动");
+            detect_log!(info, "[vtpm] LMC not defined, first boot");
         }
         _ => {
             detect_log!(info, "[vtpm] parse error");
         }
     }
     
-    // 校验
+    // Validate
     match is_lmc_defined{
         Some(true) => {
             // read the old lmc, compare it with the new one, and write the new one
@@ -149,15 +151,15 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             let mut lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
             let mut tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
             if tmc_u64 > lmc_u64 +1 {
-                detect_log!(info, "[vtpm] 异常非初次启动，已遭受克隆攻击，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
+                detect_log!(info, "[vtpm] Abnormal reboot, clone attack detected: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
                 return Err(SvsmReqError::invalid_request())
             }else{
-                detect_log!(info, "[vtpm] 正常非初次启动，旧的lmc u64 is {}, 新的tmc u64 is {}", &lmc_u64, &tmc_u64);
+                detect_log!(info, "[vtpm] Normal reboot: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
                 _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
             }
         }
         Some(false) => {
-            detect_log!(info, "[vtpm] 正常初次启动，register lmc equals[{:?}] into the cvm", &tmc_array);
+            detect_log!(info, "[vtpm] Normal first boot, registering LMC=[{:?}] into the CVM", &tmc_array);
             let _ = tss::nvdefine(vvtpm, &lmc_index, &"rw");
             _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
         }
@@ -226,21 +228,21 @@ fn parse_getcap(cap_stream : &mut Vec<u8>, is_defined :&mut Option<bool>, check_
     const BOUND:usize = 19;
 
     if cap_stream.len() < BOUND{
-        detect_log!(info, "[vtpm-parse-getcap] insufficient getcap resp length, error!");
+        verbose_log!(info, "[vtpm-getcap] insufficient getcap resp length, error!");
         return
     }else if cap_stream.len() == BOUND{
-        detect_log!(info, "[vtpm-parse-getcap] no payload!");
+        verbose_log!(info, "[vtpm-getcap] no payload!");
         return
     }
 
     let index_count = cap_stream[15..BOUND].to_vec();
     let num = u32::from_be_bytes(index_count.try_into().unwrap());
     let rest = cap_stream.split_off(BOUND);
-    detect_log!(info, "[vtpm-parse-getcap] nv_index_num is {}, data area is {:02x?}" , num, rest);
+    verbose_log!(info, "[vtpm-getcap] nv_index is {}, data_area is {:02x?}" , num, rest);
     for chunk in rest.chunks_exact(4) {
         let old_index: Vec<u8> = chunk.try_into().unwrap();
         if old_index == *check_index {
-            detect_log!(info, "[vtpm-parse-getcap] index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
+            verbose_log!(info, "[vtpm-getcap] index[0x{:02x?}] has been existed, stop repeated nv-creation!", old_index);
             if is_defined.is_some() {
                *is_defined = Some(true);
             }

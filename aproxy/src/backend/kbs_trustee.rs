@@ -54,7 +54,7 @@ impl AttestationProtocol for TrusteeProtocol {
             extra_params: Value::String("".to_string()), // unused.
         };
 
-        println!("[aproxy-protocol] req of /atuth is:\n{}", serde_json::to_string(&req).unwrap());
+        // apxy_log!("[aproxy-protocol] req of /atuth is:\n{}", serde_json::to_string(&req).unwrap());
         // Fetch challenge containing a nonce from the KBS /auth endpoint.
         let http_resp = http
             .cli
@@ -63,20 +63,19 @@ impl AttestationProtocol for TrusteeProtocol {
             .send()
             .map_err(|e| {
                 if e.is_connect() {
-            println!("[aproxy-error] 无法建立 TCP 连接（检查 KBS 进程是否启动、端口/网络隔离）: {e}");
+            apxy_log!("[aproxy-error] Failed to establish TCP connection to KBS: {e}");
         } else if e.is_timeout() {
-            println!("[aproxy-error] 请求 KBS 超时（检查防火墙或网络延迟）: {e}");
+            apxy_log!("[aproxy-error] KBS request timeout: {e}");
         } else if e.is_builder() {
-            println!("[aproxy-error] 构建请求失败（URL 格式或 Header 非法）: {e}");
+            apxy_log!("[aproxy-error] Failed to build request: {e}");
         } else if e.is_request() {
-            println!("[aproxy-error] 发送请求过程中出错: {e}");
+            apxy_log!("[aproxy-error] Request send error: {e}");
         }
 
-        // 3. 打印深层错误链 (Cause Chain)
         let mut source = std::error::Error::source(&e);
         let mut depth = 1;
         while let Some(err) = source {
-            println!("[aproxy-error]  └─ Cause {depth}: {err}");
+            apxy_log!("[aproxy-error]   Cause {depth}: {err}");
             source = err.source();
             depth += 1;
         }
@@ -88,7 +87,7 @@ impl AttestationProtocol for TrusteeProtocol {
         let text = http_resp
             .text()
             .context("unable to convert KBS /auth response to text")?;
-        println!("[aproxy-protocol] resp of /auth is:\n{}", text);
+        // apxy_log!("[aproxy-protocol] resp of /auth is:\n{}", text);
 
         let challenge: Challenge =
             serde_json::from_str(&text).context("unable to convert KBS /auth response to JSON")?;
@@ -128,9 +127,9 @@ impl AttestationProtocol for TrusteeProtocol {
             },
         };
 
-        println!("[aproxy-protocol] req struct of /attest is:\n{:?}", &attestation);
+        // apxy_log!("[aproxy-protocol] req struct of /attest is:\n{:?}", &attestation);
         let attestation_bytes = serde_json::to_vec(&attestation).context("serialize attestation")?;
-        println!("[aproxy-protocol] req bytes of /attest is:\n{:?}", &attestation_bytes);
+        // apxy_log!("[aproxy-protocol] req bytes of /attest is:\n{:?}", &attestation_bytes);
 
         // Attest TEE evidence at KBS /attest endpoint.
         let http_resp = http
@@ -142,20 +141,7 @@ impl AttestationProtocol for TrusteeProtocol {
             .send()
             .context("unable to POST to KBS /attest endpoint")?;
 
-
-        // The JSON response from the /attest endpoint is basically ignored here. Instead, we check
-        // the HTTP status to indicate successful attestation.
-        //
-        // FIXME
-        // if http_resp.status() != StatusCode::OK {
-        //     return Ok(AttestationResponse {
-        //         success: false,
-        //         secret: None,
-        //         pub_key: None,
-        //     });
-        // }
-
-        println!("[aproxy-protocol] resp header of /attest is:\n{:?}", &http_resp);
+        apxy_log!("[aproxy-protocol] resp header of /attest is:\n{:?}", &http_resp);
         if http_resp.status() != StatusCode::OK {
             return Ok(AttestationResponse {
                 success: false,
@@ -167,10 +153,10 @@ impl AttestationProtocol for TrusteeProtocol {
         let body_bytes = http_resp
             .bytes()
             .context("unable to read KBS /resource response")?;
-        println!("[aproxy-protocol] resp bytes of /attest is:\n{:?}", &body_bytes);
+        // apxy_log!("[aproxy-protocol] resp bytes of /attest is:\n{:?}", &body_bytes);
         // 反序列化(just for debug)
         let resp_struct: TokenResponse = serde_json::from_slice(&body_bytes).unwrap();
-        println!("[aproxy-protocol] resp body of /attest is:\n{:?}", &resp_struct);
+        // apxy_log!("[aproxy-protocol] resp struct of /attest is:\n{:?}", &resp_struct);
 
         set_attestation_token(resp_struct.token.clone());
 
@@ -181,7 +167,7 @@ impl AttestationProtocol for TrusteeProtocol {
             .bearer_auth(&resp_struct.token)
             .send()
             .context("unable to GET KBS /resource endpoint after attest")?;
-        println!("[aproxy-protocol] resp header of lawson/secret/cvm0 is:\n{:?}", &http_resp);
+        // apxy_log!("[aproxy-protocol] resp header of lawson/secret/cvm0 is:\n{:?}", &http_resp);
 
         if http_resp.status() != StatusCode::OK {
             return Ok(AttestationResponse {
@@ -194,7 +180,7 @@ impl AttestationProtocol for TrusteeProtocol {
             .bytes()
             .context("unable to read KBS /resource response")?;
         let resp_struct: Response = serde_json::from_slice(&body_bytes).unwrap();
-        println!("[aproxy-protocol] resp body of lawson/secret/cvm0 is:\n{:?}", &resp_struct);
+        // apxy_log!("[aproxy-protocol] resp body of lawson/secret/cvm0 is:\n{:?}", &resp_struct);
 
         let epk = unwrap_epk(&resp_struct)?;
         let aad = resp_struct
@@ -259,15 +245,12 @@ impl AttestationProtocol for TrusteeProtocol {
 
         // Debug print raw response bytes (debug and hex) for investigation
         let bb = body_bytes.clone();
-        println!("[aproxy-protocol] resp bytes of /resource (len={}): \n{:?}", bb.len(), &bb);
-        println!(
-            "[aproxy-protocol] resp bytes of /resource (hex): \n{}",
-            bb.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
-        );
+        // apxy_log!("[aproxy-protocol] resp bytes of /resource (len={}): \n{:?}", bb.len(), &bb);
+        // apxy_log!("[aproxy-protocol] resp bytes of /resource (hex): \n{}", bb.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
 
         let resp_struct: Response = serde_json::from_slice(&body_bytes)
             .context("unable to deserialize KBS /resource response")?;
-        println!("[aproxy-protocol] resp body of /resource is:\n{:?}", &resp_struct);
+        // apxy_log!("[aproxy-protocol] resp body of /resource is:\n{:?}", &resp_struct);
 
         let epk = unwrap_epk(&resp_struct)?;
         let aad = resp_struct
@@ -330,11 +313,11 @@ fn unwrap_epk(resp: &Response) -> anyhow::Result<EcP256PublicKey> {
     };
 
     if x.len() == expected_len + 1 && x[0] == 0 {
-        println!("[aproxy-protocol] normalized EC x by stripping leading zero, len {} -> {}", x.len(), expected_len);
+        apxy_log!("[aproxy-protocol] normalized EC x by stripping leading zero, len {} -> {}", x.len(), expected_len);
         x.remove(0);
     }
     if y.len() == expected_len + 1 && y[0] == 0 {
-        println!("[aproxy-protocol] normalized EC y by stripping leading zero, len {} -> {}", y.len(), expected_len);
+        apxy_log!("[aproxy-protocol] normalized EC y by stripping leading zero, len {} -> {}", y.len(), expected_len);
         y.remove(0);
     }
 

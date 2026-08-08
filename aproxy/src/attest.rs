@@ -24,9 +24,9 @@ pub fn negotiation_with_payload(
     let request: NegotiationRequest = serde_json::from_slice(&payload)
         .context("unable to deserialize negotiation request from JSON")?;
 
-    println!("[aproxy-handler] NegotiationRequest struct from svsm is:\n{:#?}", &request);
+    apxy_log!("[aproxy] NegotiationRequest struct from svsm is:\n{:#?}", &request);
     let response: NegotiationResponse = http.negotiation(request)?;
-    println!("[aproxy-handler] NegotiationResponse struct from protocol is:\n{:#?}", &response);
+    apxy_log!("[aproxy] NegotiationResponse struct from protocol is:\n{:#?}", &response);
 
     proxy_write(stream, response)?;
     Ok(())
@@ -41,9 +41,9 @@ pub fn attestation_with_payload(
     let request: AttestationRequest = serde_json::from_slice(&payload)
         .context("unable to deserialize attestation request from JSON")?;
 
-    println!("[aproxy-handler] AttestationRequest struct from svsm is:\n{:?}", &request);
+    apxy_log!("[aproxy] AttestationRequest struct from svsm is:\n{:?}", &request);
     let response = http.attestation(request)?;
-    println!("[aproxy-handler] AttestationResponse struct from protocol is:\n{:?}", &response);
+    apxy_log!("[aproxy] AttestationResponse struct from protocol is:\n{:?}", &response);
 
     proxy_write(stream, response)?;
     Ok(())
@@ -63,10 +63,10 @@ fn negotiation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
             .context("unable to deserialize negotiation request from JSON")?
     };
 
-    println!("[aproxy-handler] NegotiationRequest struct from svsm is:\n{:#?}", &request);
+    apxy_log!("[aproxy] NegotiationRequest struct from svsm is:\n{:#?}", &request);
     // Gather negotiation parameters from the attestation server.
     let response: NegotiationResponse = http.negotiation(request)?;
-    println!("[aproxy-handler] NegotiationResponse struct from protocol is:\n{:#?}", &response);
+    apxy_log!("[aproxy] NegotiationResponse struct from protocol is:\n{:#?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -84,10 +84,10 @@ fn attestation(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyho
             .context("unable to deserialize attestation request from JSON")?
     };
     
-    println!("[aproxy-handler] AttestationRequest struct from svsm is:\n{:?}", &request);
+    apxy_log!("[aproxy] AttestationRequest struct from svsm is:\n{:?}", &request);
     // Attest the TEE evidence with the server.
     let response = http.attestation(request)?;
-    println!("[aproxy-handler] AttestationResponse struct from protocol is:\n{:?}", &response);
+    apxy_log!("[aproxy] AttestationResponse struct from protocol is:\n{:?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -102,9 +102,9 @@ fn resource(stream: &mut UnixStream, http: &mut backend::HttpClient) -> anyhow::
             .context("unable to deserialize resource request from JSON")?
     };
 
-    println!("[aproxy-handler] ResourceRequest struct from svsm is:\n{:?}", &request);
+    apxy_log!("[aproxy] ResourceRequest struct from svsm is:\n{:?}", &request);
     let response = http.resource(request)?;
-    println!("[aproxy-handler] ResourceResponse struct from protocol is:\n{:?}", &response);
+    apxy_log!("[aproxy] ResourceResponse struct from protocol is:\n{:?}", &response);
 
     // Write the response from the attestation server to SVSM.
     proxy_write(stream, response)?;
@@ -130,7 +130,7 @@ pub fn proxy_read(stream: &mut UnixStream) -> anyhow::Result<Vec<u8>> {
         .read_exact(&mut bytes)
         .context("unable to read request buffer from socket")?;
 
-    println!("[aproxy-handler] read {} bytes from svsm:\n{:?}", &len, &bytes);
+    // apxy_log!("[aproxy] read {} bytes from svsm:\n{:?}", &len, &bytes);
     Ok(bytes)
 }
 
@@ -140,7 +140,7 @@ pub fn proxy_write(stream: &mut UnixStream, buf: impl Serialize) -> anyhow::Resu
     let bytes = serde_json::to_vec(&buf).context("unable to convert buffer to JSON bytes")?;
     let len = bytes.len();
     let len_ne = len.to_ne_bytes();
-    println!("[aproxy-handler] write {} bytes back to svsm:\n{:?}", &len, &bytes);
+    // apxy_log!("[aproxy] write {} bytes back to svsm:\n{:?}", &len, &bytes);
 
     stream
         .write_all(&len_ne)

@@ -204,13 +204,15 @@ fn vtpm_command_request(params: &RequestParams) -> Result<(), SvsmReqError> {
         TpmPlatformCommand::SendCommand => {
             let mut buffer = read_bytes_from_guest(paddr, PAGE_SIZE)?;
 
-            // If this is a TPM_CC_GetRandom command, trigger dynamic detection.
-            // CC is at bytes 6-10 in big-endian: 0x00 0x00 0x01 0x7B
+            // Check CC for custom detect trigger (vendor-specific: 0x20000001).
+            // TpmSendCommandRequest: command(4) + locality(1) + inbuf_size(4) = 9
+            // TPM header: tag(2) + size(4) + CC(4) → CC at offset 9+6=15
             #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-            if buffer.len() >= 10 {
-                let cc = u32::from_be_bytes(buffer[6..10].try_into().unwrap());
-                if cc == 0x0000017B {
-                    crate::protocols::detect::trigger_on_getrandom();
+            if buffer.len() >= 19 {
+                let cc = u32::from_be_bytes(buffer[15..19].try_into().unwrap());
+                if cc == 0x20000001 {
+                    // log::info!("[vtpm-cc] SVSM detect trigger (CC=0x20000001)");
+                    crate::protocols::dynamic_detect::trigger_dynamic_detection();
                 }
             }
 
