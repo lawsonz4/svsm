@@ -202,8 +202,18 @@ fn vtpm_command_request(params: &RequestParams) -> Result<(), SvsmReqError> {
 
     match cmd {
         TpmPlatformCommand::SendCommand => {
-            // The vTPM buffer size is one page, but it not required to be page aligned.
             let mut buffer = read_bytes_from_guest(paddr, PAGE_SIZE)?;
+
+            // If this is a TPM_CC_GetRandom command, trigger dynamic detection.
+            // CC is at bytes 6-10 in big-endian: 0x00 0x00 0x01 0x7B
+            #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+            if buffer.len() >= 10 {
+                let cc = u32::from_be_bytes(buffer[6..10].try_into().unwrap());
+                if cc == 0x0000017B {
+                    crate::protocols::detect::trigger_on_getrandom();
+                }
+            }
+
             tpm_send_command_request(&mut buffer[..])?;
             copy_slice_to_guest(&buffer[..], paddr)?;
         }

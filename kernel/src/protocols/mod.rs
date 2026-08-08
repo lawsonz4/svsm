@@ -7,6 +7,8 @@
 pub mod apic;
 pub mod attest;
 pub mod core;
+#[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
+pub mod detect;
 pub mod errors;
 #[cfg(all(feature = "uefivars", not(test)))]
 pub mod uefivars;
