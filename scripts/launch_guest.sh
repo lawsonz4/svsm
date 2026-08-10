@@ -6,6 +6,13 @@
 # Author: Roy Hopkins <roy.hopkins@suse.com>
 set -e
 
+unset http_proxy
+unset https_proxy
+unset all_proxy
+echo "http_proxy 已清空"
+echo "https_proxy 已清空"
+echo "all_proxy 已清空"
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 : "${QEMU:=qemu-system-x86_64}"
@@ -57,7 +64,7 @@ while [[ $# -gt 0 ]]; do
     --state)
       STATE_ENABLE="x-svsm-virtio-mmio=on"
       STATE_DEVICE+="-global virtio-mmio.force-legacy=false "
-      STATE_DEVICE+="-drive file=$2,format=raw,if=none,id=svsm_storage,cache=none "
+      STATE_DEVICE+="-drive file=$2,format=raw,if=none,id=svsm_storage,cache=none,file.locking=off "
       STATE_DEVICE+="-device virtio-blk-device,drive=svsm_storage "
       shift
       shift
@@ -187,7 +194,7 @@ $SUDO_CMD \
     $SNP_GUEST \
     -smp 4 \
     -no-reboot \
-    -netdev user,id=vmnic,hostfwd=tcp::${SSH_PORT}-:22 \
+    -netdev user,id=vmnic \
     -device e1000,netdev=vmnic,romfile= \
     $IMAGE_DISK \
     -nographic \

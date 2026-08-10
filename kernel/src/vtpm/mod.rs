@@ -19,6 +19,7 @@ use alloc::string::String;
 use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
 use crate::vtpm::tcgtpm::tss;
 
+use crate::serial::{SerialPort, Terminal, DEFAULT_SERIAL_PORT};
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
 
@@ -116,6 +117,7 @@ pub static VTPM: SpinLock<Vtpm> = SpinLock::new(Vtpm::new());
 /// Initialize the TPM by calling the init() implementation of the
 /// [`VtpmInterface`]
 pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqError> {
+    detect_log!(info, "[detect] static cloning detection called");
     let mut vtpm = VTPM.lock();
     if vtpm.is_powered_on() {
         return Ok(());
@@ -133,13 +135,13 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     parse_getcap(&mut cap_resp, &mut is_lmc_defined, &lmc_index);
     match is_lmc_defined {
         Some(true) => {
-            detect_log!(info, "[vtpm] LMC already defined, not first boot");
+            detect_log!(info, "[detect] LMC already defined, not first boot in normal mode");
         }
         Some(false) => {
-            detect_log!(info, "[vtpm] LMC not defined, first boot");
+            detect_log!(info, "[detect] LMC not defined, first boot in security mode");
         }
         _ => {
-            detect_log!(info, "[vtpm] parse error");
+            detect_log!(info, "[detect] tpm nv parse error");
         }
     }
     
@@ -148,23 +150,42 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
         Some(true) => {
             // read the old lmc, compare it with the new one, and write the new one
             let nv_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
-            let mut lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
-            let mut tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
-            if tmc_u64 > lmc_u64 +1 {
-                detect_log!(info, "[vtpm] Abnormal reboot, clone attack detected: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
-                return Err(SvsmReqError::invalid_request())
-            }else{
-                detect_log!(info, "[vtpm] Normal reboot: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
+            let lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
+            let tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
+            if tmc_u64 == lmc_u64 + 1 {
+                detect_log!(info, "[detect] Normal reboot without attacks: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
                 _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
+            } else if tmc_u64 > lmc_u64 + 1 {
+                log::error!(
+                    "[detect] Static Cloning attack detected! old LMC={}, new TMC={}.",
+                    &lmc_u64,
+                    &tmc_u64
+                );
+                if verify_admin_passwd() {
+                    // Admin unlocked — allow boot to proceed
+                } else {
+                    log::error!("[detect] Admin authentication failed. System remains locked.");
+                }
+            } else {
+                log::error!(
+                    "[detect] Unknown exception: old LMC={}, new TMC={} (TMC is unexpectedly behind LMC).",
+                    &lmc_u64,
+                    &tmc_u64
+                );
+                if verify_admin_passwd() {
+                    // Admin unlocked — allow boot to proceed
+                } else {
+                    log::error!("[detect] Admin authentication failed. System remains locked.");
+                }
             }
         }
         Some(false) => {
-            detect_log!(info, "[vtpm] Normal first boot, registering LMC=[{:?}] into the CVM", &tmc_array);
+            detect_log!(info, "[detect] Normal first boot, registering LMC=[{:?}] into the CVM", &tmc_array);
             let _ = tss::nvdefine(vvtpm, &lmc_index, &"rw");
             _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
         }
         _ => {
-            detect_log!(info, "[vtpm] parse error");
+            detect_log!(info, "[detect] parse error");
         }
     }
     // post check (nvindex situation)
@@ -175,25 +196,58 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     Ok(())
 }
 
-// // TODO：svsm有无串口输入?
-// fn verify_admin_passwd() -> bool{
-//     const PWD_CORRECT: &str = "root";
+/// Block and read a line from the serial console. Returns the entered password string.
+/// Supports backspace for editing.
+fn read_serial_line() -> String {
+    let serial: &SerialPort<'_> = &DEFAULT_SERIAL_PORT;
+    let mut input: [u8; 64] = [0; 64];
+    let mut pos = 0;
 
-//     let mut input = String::new();
-//     // 读取一行用户输入
-//     io::stdin()
-//         .read_line(&mut input)
-//         .expect("读取输入失败");
+    loop {
+        let byte = Terminal::get_byte(serial);
+        match byte {
+            b'\r' | b'\n' => break,
+            b'\x08' | b'\x7f' => {
+                // Backspace / DEL
+                if pos > 0 {
+                    pos -= 1;
+                    Terminal::put_byte(serial, b'\x08');
+                    Terminal::put_byte(serial, b' ');
+                    Terminal::put_byte(serial, b'\x08');
+                }
+            }
+            _ if pos < input.len() - 1 && byte.is_ascii_graphic() => {
+                input[pos] = byte;
+                pos += 1;
+                Terminal::put_byte(serial, byte); // echo
+            }
+            // silently ignore other control chars
+            _ => {}
+        }
+    }
 
-//     // 剔除末尾换行符 \n / \r\n
-//     let input = input.trim();
+    Terminal::put_byte(serial, b'\r');
+    Terminal::put_byte(serial, b'\n');
 
-//     if input == PWD_CORRECT {
-//         true
-//     } else {
-//         false
-//     }
-// }
+    String::from(core::str::from_utf8(&input[..pos]).unwrap_or(""))
+}
+
+/// Verify the admin key entered via serial console.
+/// Blocks until the user provides input, then compares against the secret.
+fn verify_admin_passwd() -> bool {
+    const ADMIN_KEY: &str = "root";
+
+    log::info!("[detect] System locked. Enter admin key to unlock:");
+    let entered = read_serial_line();
+
+    if entered == ADMIN_KEY {
+        log::info!("[detect] Admin key accepted. Resuming normal operation.");
+        true
+    } else {
+        log::error!("[detect] Invalid admin key '{}'. Access denied.", entered);
+        false
+    }
+}
 
 fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmReqError> {
     let tag = u16::from_be_bytes(bytes[0..2].try_into().unwrap());

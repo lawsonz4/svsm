@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Local verbose switch: true = print all [detect] logs (default on).
@@ -21,6 +22,7 @@ use crate::attest::ATTESTATION_DRIVER;
 use crate::error::SvsmError;
 use crate::protocols::errors::SvsmReqError;
 use crate::protocols::RequestParams;
+use crate::serial::{SerialPort, Terminal, DEFAULT_SERIAL_PORT};
 use crate::vtpm::tcgtpm::tss;
 use crate::vtpm::tcgtpm::TcgTpm as Vtpm;
 use crate::vtpm::VTPM;
@@ -42,7 +44,7 @@ use crate::vtpm::VTPM;
 // }
 
 pub fn trigger_dynamic_detection() {
-    detect_log!(info, "[detect] dynamic detection called");
+    detect_log!(info, "[detect] dynamic cloning detection called");
     do_dynamic_detection();
 }
 
@@ -102,14 +104,18 @@ fn do_dynamic_detection() {
     let mut vtpm = VTPM.lock();
     let vvtpm: &mut Vtpm = &mut *vtpm;
     if tmc_u64 > lmc_u64 + 1 {
-        panic!(
-            "[detect] ATTACK: Trusted-MC={}, Local-MC={}",
-            tmc_u64, lmc_u64
-        );
+        log::error!(
+            "[detect] Clone attack detected! old LMC={}, new TMC={}.",
+            lmc_u64, tmc_u64);
+        if verify_admin_passwd() {
+            // Admin unlocked — allow to proceed
+        } else {
+            log::error!("[detect] Admin authentication failed. System remains locked.");
+        }
     } else if tmc_u64 == lmc_u64 + 1 {
         detect_log!(info,
-            "[detect] normal: TMC={}, LMC={}",
-            tmc_u64, lmc_u64
+            "[detect] normal: LMC={}, TMC={}",
+            lmc_u64, tmc_u64
         );
         let tmc_array: [u8; 8] = tmc_bytes
             .as_slice()
@@ -119,9 +125,16 @@ fn do_dynamic_detection() {
             detect_log!(error, "[detect] nvwrite failed: {:?}", e);
         }
     } else {
-        detect_log!(info, "[detect] no change: TMC={}, LMC={}",
-            tmc_u64, lmc_u64
+        log::error!(
+            "[detect] Unknown exception: old LMC={}, new TMC={} (TMC is unexpectedly behind LMC).",
+            &lmc_u64,
+            &tmc_u64
         );
+        if verify_admin_passwd() {
+            // Admin unlocked — allow boot to proceed
+        } else {
+            log::error!("[detect] Admin authentication failed. System remains locked.");
+        }
     }
 }
 
@@ -139,6 +152,57 @@ fn extract_mc(bytes: &Vec<u8>) -> Result<u64, SvsmError> {
     let nv_data = &bytes[param_area_start + 2..param_area_start + 2 + nv_len];
     let nv_array: [u8; 8] = nv_data.try_into().map_err(|_e| SvsmError::InvalidBytes)?;
     let val = u64::from_le_bytes(nv_array);
-    detect_log!(info, "[detect] lmc_bytes is {:02x?}, lmc_u64 is {}", nv_array, val);
+    // detect_log!(info, "[detect] lmc_bytes is {:02x?}, lmc_u64 is {}", nv_array, val);
     Ok(val)
+}
+
+/// Block and read a line from the serial console. Returns the entered password string.
+/// Supports backspace for editing.
+fn read_serial_line() -> String {
+    let serial: &SerialPort<'_> = &DEFAULT_SERIAL_PORT;
+    let mut input: [u8; 64] = [0; 64];
+    let mut pos = 0;
+
+    loop {
+        let byte = Terminal::get_byte(serial);
+        match byte {
+            b'\r' | b'\n' => break,
+            b'\x08' | b'\x7f' => {
+                if pos > 0 {
+                    pos -= 1;
+                    Terminal::put_byte(serial, b'\x08');
+                    Terminal::put_byte(serial, b' ');
+                    Terminal::put_byte(serial, b'\x08');
+                }
+            }
+            _ if pos < input.len() - 1 && byte.is_ascii_graphic() => {
+                input[pos] = byte;
+                pos += 1;
+                Terminal::put_byte(serial, byte);
+            }
+            _ => {}
+        }
+    }
+
+    Terminal::put_byte(serial, b'\r');
+    Terminal::put_byte(serial, b'\n');
+
+    String::from(core::str::from_utf8(&input[..pos]).unwrap_or(""))
+}
+
+/// Verify the admin key entered via serial console.
+/// Blocks until the user provides input, then compares against the secret.
+fn verify_admin_passwd() -> bool {
+    const ADMIN_KEY: &str = "root";
+
+    log::info!("[detect] System locked. Enter admin key to unlock:");
+    let entered = read_serial_line();
+
+    if entered == ADMIN_KEY {
+        log::info!("[detect] Admin key accepted. Resuming normal operation.");
+        true
+    } else {
+        log::error!("[detect] Invalid admin key '{}'. Access denied.", entered);
+        false
+    }
 }
