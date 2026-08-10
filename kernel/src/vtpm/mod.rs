@@ -125,6 +125,52 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
     vtpm.init(manufacture)?;
     let vvtpm: &mut Vtpm = &mut *vtpm;
     let _ = tss::startup(vvtpm);
+
+    // ========== Power-loss simulation using TPM NV ==========
+    // Uses NV index 0x01c00002 to remember phase across reboots.
+    // counter=0 (1st boot): write 1 → proceed normally
+    // counter=1 (2nd boot): write 2 → panic (simulate power loss)
+    // counter=2 (3rd boot): write 0 → proceed normally
+    let power_sim_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x02].to_vec();
+
+    let counter: u64 = match tss::nvread(vvtpm, &power_sim_index) {
+        Ok(nv_bytes) => extract_mc(&nv_bytes).unwrap(),
+        Err(_) => {
+            // NV index not defined yet → first ever boot, define it with counter=0
+            let _ = tss::nvdefine(vvtpm, &power_sim_index, &"rw");
+            let zero: [u8; 8] = [0; 8];
+            _ = tss::nvwrite(vvtpm, &power_sim_index, &zero);
+            0
+        }
+    };
+
+    match counter {
+        2 => {
+            // 3rd boot: was 2 (crashed last time), reset to 0, proceed normally
+            detect_log!(info, "[detect] Power-loss sim: 3rd boot (counter=2), resetting and proceeding normally.");
+            let zero: [u8; 8] = [0; 8];
+            _ = tss::nvwrite(vvtpm, &power_sim_index, &zero);
+        }
+        1 => {
+            // 2nd boot: was 1 (passed normally last time), bump to 2, then panic
+            detect_log!(info, "[detect] Power-loss sim: 2nd boot (counter=1), bumping to 2 and panicking...");
+            let two: [u8; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
+            _ = tss::nvwrite(vvtpm, &power_sim_index, &two);
+            panic!("[detect] Simulated power loss! The VM will now crash and reboot.");
+        }
+        0 => {
+            // 1st boot: bump to 1, proceed normally
+            detect_log!(info, "[detect] Power-loss sim: 1st boot (counter=0), bumping to 1 and proceeding normally.");
+            let one: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+            _ = tss::nvwrite(vvtpm, &power_sim_index, &one);
+        }
+        _ => {
+            detect_log!(info, "[detect] Power-loss sim: unexpected counter={}, resetting and proceeding.", counter);
+            let zero: [u8; 8] = [0; 8];
+            _ = tss::nvwrite(vvtpm, &power_sim_index, &zero);
+        }
+    }
+
     // 发送cap命令
     let  property = [0x01, 0x00, 0x00, 0x00].to_vec();
     let mut cap_resp = tss::getcap(vvtpm, &property)?;
