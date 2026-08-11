@@ -356,31 +356,33 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     }
 
     // Decrypt the key and tmc
-    let (key, tmc_array): (Option<_>, [u8; 8]) = {
+    let (key, tmc_array, is_pending): (Option<_>, [u8; 8], u8) = {
         #[cfg(feature = "attest")]
         {
             use svsm::verbose_log;
 
             let mut driver = AttestationDriver::try_from(Tee::Snp).unwrap();
             let secret = driver.attest().expect("Remote attestation failed");
-            let key_bytes = &secret[..secret.len() - 8];
-            let tmc_array = (secret[secret.len() - 8..]).try_into().unwrap();
+            let key_bytes = &secret[..secret.len() - 9];
+            let tmc_array = secret[secret.len() - 9..secret.len() - 1].try_into().unwrap();
+            let is_pending = secret[secret.len() - 1];
             verbose_log!(info,
-                "[svsm-main] key bytes is: {:?}, tmc bytes is: {:?}",
+                "[svsm-main] key bytes is: {:?}, tmc bytes is: {:?}, is_pending: {}",
                 key_bytes,
-                tmc_array
+                tmc_array,
+                is_pending
             );
 
             let mut xts_key = [0; 64];
             xts_key[..64].copy_from_slice(key_bytes);
 
             ATTESTATION_DRIVER.lock().replace(driver);
-            (Some(xts_key), tmc_array)
+            (Some(xts_key), tmc_array, is_pending)
         }
 
         #[cfg(not(feature = "attest"))]
         {
-            (None, [0u8; 8])
+            (None, [0u8; 8], 0u8)
         }
     };
 
@@ -388,7 +390,7 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     initialize_blk(key);
 
     #[cfg(all(feature = "vtpm", not(test)))]
-    vtpm_init(false, &tmc_array).expect("vTPM failed to initialize");
+    vtpm_init(false, &tmc_array, is_pending).expect("vTPM failed to initialize");
 
     #[cfg(feature = "attest")]
     {

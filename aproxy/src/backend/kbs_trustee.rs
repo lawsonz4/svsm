@@ -280,12 +280,18 @@ impl AttestationProtocol for TrusteeProtocol {
         let token = get_attestation_token()
             .ok_or_else(|| anyhow!("attestation token not available"))?;
 
+        apxy_log!("[aproxy-protocol] release request: {:?}", _request);
+        apxy_log!("[aproxy-protocol] release PATCH {}/kbs/v0/resource/lawson/secret/cvm0", http.url);
+
         let http_resp = http
             .cli
             .patch(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
             .bearer_auth(&token)
             .send()
             .context("unable to PATCH to KBS /resource endpoint for release")?;
+
+        apxy_log!("[aproxy-protocol] release resp status: {}, headers:\n{:?}",
+            http_resp.status(), http_resp.headers());
 
         Ok(ReleaseResponse {
             success: http_resp.status() == StatusCode::OK,

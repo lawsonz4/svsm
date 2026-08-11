@@ -116,8 +116,8 @@ pub static VTPM: SpinLock<Vtpm> = SpinLock::new(Vtpm::new());
 
 /// Initialize the TPM by calling the init() implementation of the
 /// [`VtpmInterface`]
-pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqError> {
-    detect_log!(info, "[detect] static cloning detection called");
+pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8], is_pending: u8) -> Result<(), SvsmReqError> {
+    detect_log!(info, "[detect] static cloning detection called, is_pending={}", is_pending);
     let mut vtpm = VTPM.lock();
     if vtpm.is_powered_on() {
         return Ok(());
@@ -198,30 +198,49 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8]) -> Result<(), SvsmReqEr
             let nv_bytes = tss::nvread(vvtpm, &lmc_index).unwrap();
             let lmc_u64: u64 = extract_mc(&nv_bytes).unwrap();
             let tmc_u64: u64 = u64::from_le_bytes(*tmc_array);
-            if tmc_u64 == lmc_u64 + 1 {
-                detect_log!(info, "[detect] Normal reboot without attacks: old LMC={}, new TMC={}", &lmc_u64, &tmc_u64);
-                _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
-            } else if tmc_u64 > lmc_u64 + 1 {
-                log::error!(
-                    "[detect] Static Cloning attack detected! old LMC={}, new TMC={}.",
-                    &lmc_u64,
-                    &tmc_u64
-                );
-                if verify_admin_passwd() {
-                    // Admin unlocked — allow boot to proceed
+            detect_log!(info, "[detect] static check: LMC={}, TMC={}, is_pending={}", lmc_u64, tmc_u64, is_pending);
+            if is_pending == 0 {
+                // CLEAR state
+                if tmc_u64 == lmc_u64 + 1 {
+                    // c2: Normal Running
+                    detect_log!(info, "[detect] c2: Normal reboot without attacks: old LMC={}, new TMC={}", lmc_u64, tmc_u64);
+                    _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
+                } else if tmc_u64 > lmc_u64 + 1 {
+                    // c3: Cloning Attack Detected
+                    log::error!("[detect] c3: Static Cloning attack detected! old LMC={}, new TMC={}.", lmc_u64, tmc_u64);
+                    if verify_admin_passwd() {
+                        // Admin unlocked — allow boot to proceed
+                    } else {
+                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                    }
                 } else {
-                    log::error!("[detect] Admin authentication failed. System remains locked.");
+                    // c1: Unreachable (M <= N, CLEAR)
+                    log::error!("[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    if verify_admin_passwd() {
+                    } else {
+                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                    }
                 }
             } else {
-                log::error!(
-                    "[detect] Unknown exception: old LMC={}, new TMC={} (TMC is unexpectedly behind LMC).",
-                    &lmc_u64,
-                    &tmc_u64
-                );
-                if verify_admin_passwd() {
-                    // Admin unlocked — allow boot to proceed
+                // SET state
+                if tmc_u64 == lmc_u64 + 2 {
+                    // c6: System Crash or Power Loss
+                    log::warn!("[detect] c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
+                } else if tmc_u64 > lmc_u64 + 2 {
+                    // c7: Disguised Cloning Attack
+                    log::error!("[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    if verify_admin_passwd() {
+                    } else {
+                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                    }
                 } else {
-                    log::error!("[detect] Admin authentication failed. System remains locked.");
+                    // c4/c5: Unreachable (M <= N+1, SET)
+                    log::error!("[detect] c4/c5: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    if verify_admin_passwd() {
+                    } else {
+                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                    }
                 }
             }
         }

@@ -50,7 +50,7 @@ pub mod vmm;
 pub mod vtpm;
 
 /// Global verbose switch for all [xxx] debug logs.
-pub const DETECT_VERBOSE: bool = false;
+pub const DETECT_VERBOSE: bool = true;
 
 /// Conditionally emit a log when `DETECT_VERBOSE` is true.
 /// Works everywhere without imports — just like `log::info!()`.

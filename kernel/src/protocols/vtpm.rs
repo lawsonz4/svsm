@@ -209,10 +209,13 @@ fn vtpm_command_request(params: &RequestParams) -> Result<(), SvsmReqError> {
             // TPM header: tag(2) + size(4) + CC(4) → CC at offset 9+6=15
             #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
             if buffer.len() >= 19 {
-                let cc = u32::from_be_bytes(buffer[15..19].try_into().unwrap());
-                if cc == 0x20000001 {
-                    // log::info!("[vtpm-cc] SVSM detect trigger (CC=0x20000001)");
-                    crate::protocols::dynamic_detect::trigger_dynamic_detection();
+                let tag = u16::from_be_bytes(buffer[9..11].try_into().unwrap());
+                if (tag == 0x8001 || tag == 0x8002) {
+                    let cc = u32::from_be_bytes(buffer[15..19].try_into().unwrap());
+                    if cc == 0x20000001 {
+                        // log::info!("[vtpm-cc] SVSM detect trigger (CC=0x20000001)");
+                        crate::protocols::dynamic_detect::trigger_dynamic_detection();
+                    }
                 }
             }
 

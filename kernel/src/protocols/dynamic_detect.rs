@@ -72,7 +72,7 @@ fn do_dynamic_detection() {
     };
 
     // Step 2: get TMC from KBS (slow serial I/O, VTPM lock NOT held)
-    let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
+    let (tmc_bytes, tmc_u64, is_pending): (Vec<u8>, u64, u8) = {
         let mut driver_lock = ATTESTATION_DRIVER.lock();
         let driver = match driver_lock.as_mut() {
             Some(d) => d,
@@ -83,19 +83,21 @@ fn do_dynamic_detection() {
         };
         match driver.resource() {
             Ok(secret) => {
-                if secret.len() >= 8 {
-                    let tmc_vec = secret[secret.len() - 8..].to_vec();
+                if secret.len() >= 9 {
+                    let tmc_vec = secret[secret.len() - 9..secret.len() - 1].to_vec();
+                    let is_pending = secret[secret.len() - 1];
                     let tmc_u =
                         u64::from_le_bytes(tmc_vec.as_slice().try_into().unwrap_or([0u8; 8]));
-                    (tmc_vec, tmc_u)
+                    detect_log!(info, "[detect] is_pending: {}", is_pending);
+                    (tmc_vec, tmc_u, is_pending)
                 } else {
                     detect_log!(warn, "[detect] secret too short");
-                    (Vec::new(), 0u64)
+                    (Vec::new(), 0u64, 0u8)
                 }
             }
             Err(e) => {
                 detect_log!(info, "[detect] resource request failed: {:?}", e);
-                (Vec::new(), 0u64)
+                (Vec::new(), 0u64, 0u8)
             }
         }
         // driver_lock dropped here
@@ -104,37 +106,60 @@ fn do_dynamic_detection() {
     // Step 3: compare and update LMC (re-acquire VTPM lock, fast)
     let mut vtpm = VTPM.lock();
     let vvtpm: &mut Vtpm = &mut *vtpm;
-    if tmc_u64 > lmc_u64 + 1 {
-        log::error!(
-            "[detect] Clone attack detected! old LMC={}, new TMC={}.",
-            lmc_u64, tmc_u64);
-        if verify_admin_passwd() {
-            // Admin unlocked — allow to proceed
+    detect_log!(info, "[detect] dynamic check: LMC={}, TMC={}, is_pending={}", lmc_u64, tmc_u64, is_pending);
+    if is_pending == 0 {
+        // CLEAR state
+        if tmc_u64 == lmc_u64 + 1 {
+            // c2: Normal Running
+            detect_log!(info, "[detect] c2: Normal: LMC={}, TMC={}", lmc_u64, tmc_u64);
+            let tmc_array: [u8; 8] = tmc_bytes
+                .as_slice()
+                .try_into()
+                .expect("tmc_bytes must be exactly 8 bytes");
+            if let Err(e) = tss::nvwrite(vvtpm, &lmc_index, &tmc_array) {
+                detect_log!(error, "[detect] nvwrite failed: {:?}", e);
+            }
+        } else if tmc_u64 > lmc_u64 + 1 {
+            // c3: Cloning Attack Detected
+            log::error!("[detect] c3: Clone attack detected! LMC={}, TMC={}.", lmc_u64, tmc_u64);
+            if verify_admin_passwd() {
+            } else {
+                log::error!("[detect] Admin authentication failed. System remains locked.");
+            }
         } else {
-            log::error!("[detect] Admin authentication failed. System remains locked.");
-        }
-    } else if tmc_u64 == lmc_u64 + 1 {
-        detect_log!(info,
-            "[detect] normal: LMC={}, TMC={}",
-            lmc_u64, tmc_u64
-        );
-        let tmc_array: [u8; 8] = tmc_bytes
-            .as_slice()
-            .try_into()
-            .expect("tmc_bytes must be exactly 8 bytes");
-        if let Err(e) = tss::nvwrite(vvtpm, &lmc_index, &tmc_array) {
-            detect_log!(error, "[detect] nvwrite failed: {:?}", e);
+            // c1: Unreachable (M <= N, CLEAR)
+            log::error!("[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
+            if verify_admin_passwd() {
+            } else {
+                log::error!("[detect] Admin authentication failed. System remains locked.");
+            }
         }
     } else {
-        log::error!(
-            "[detect] Unknown exception: old LMC={}, new TMC={} (TMC is unexpectedly behind LMC).",
-            &lmc_u64,
-            &tmc_u64
-        );
-        if verify_admin_passwd() {
-            // Admin unlocked — allow boot to proceed
+        // SET state
+        if tmc_u64 == lmc_u64 + 2 {
+            // c6: System Crash or Power Loss
+            log::warn!("[detect] c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+            let tmc_array: [u8; 8] = tmc_bytes
+                .as_slice()
+                .try_into()
+                .expect("tmc_bytes must be exactly 8 bytes");
+            if let Err(e) = tss::nvwrite(vvtpm, &lmc_index, &tmc_array) {
+                detect_log!(error, "[detect] nvwrite failed: {:?}", e);
+            }
+        } else if tmc_u64 > lmc_u64 + 2 {
+            // c7: Disguised Cloning Attack
+            log::error!("[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+            if verify_admin_passwd() {
+            } else {
+                log::error!("[detect] Admin authentication failed. System remains locked.");
+            }
         } else {
-            log::error!("[detect] Admin authentication failed. System remains locked.");
+            // c4/c5: Unreachable (M <= N+1, SET)
+            log::error!("[detect] c4/c5: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
+            if verify_admin_passwd() {
+            } else {
+                log::error!("[detect] Admin authentication failed. System remains locked.");
+            }
         }
     }
 
