@@ -73,8 +73,8 @@ fn do_dynamic_detection() {
 
     // Step 2: get TMC from KBS (slow serial I/O, VTPM lock NOT held)
     let (tmc_bytes, tmc_u64): (Vec<u8>, u64) = {
-        let mut guard = ATTESTATION_DRIVER.lock();
-        let driver = match guard.as_mut() {
+        let mut driver_lock = ATTESTATION_DRIVER.lock();
+        let driver = match driver_lock.as_mut() {
             Some(d) => d,
             None => {
                 detect_log!(info, "[detect] attestation driver not ready");
@@ -98,6 +98,7 @@ fn do_dynamic_detection() {
                 (Vec::new(), 0u64)
             }
         }
+        // driver_lock dropped here
     };
 
     // Step 3: compare and update LMC (re-acquire VTPM lock, fast)
@@ -134,6 +135,16 @@ fn do_dynamic_detection() {
             // Admin unlocked — allow boot to proceed
         } else {
             log::error!("[detect] Admin authentication failed. System remains locked.");
+        }
+    }
+
+    // Step 4: notify KBS to release resources
+    {
+        let mut driver = ATTESTATION_DRIVER.lock();
+        if let Some(driver) = driver.as_mut() {
+            if let Err(e) = driver.release() {
+                detect_log!(error, "[detect] release request failed: {:?}", e);
+            }
         }
     }
 }

@@ -59,6 +59,13 @@ impl HttpClient {
             Protocol::Empty => return Err(anyhow!("protocol not initialized")),
         }
     }
+
+    pub fn release(&mut self, req: ReleaseRequest) -> anyhow::Result<ReleaseResponse> {
+        match self.protocol {
+            Protocol::Trustee(mut trustee) => trustee.release(self, req),
+            Protocol::Empty => return Err(anyhow!("protocol not initialized")),
+        }
+    }
 }
 
 /// Attestation Protocol identifier.
@@ -97,4 +104,10 @@ pub trait AttestationProtocol {
         client: &mut HttpClient,
         req: ResourceRequest,
     ) -> anyhow::Result<ResourceResponse>;
+
+    fn release(
+        &mut self,
+        client: &mut HttpClient,
+        req: ReleaseRequest,
+    ) -> anyhow::Result<ReleaseResponse>;
 }

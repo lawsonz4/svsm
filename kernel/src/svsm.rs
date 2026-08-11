@@ -390,6 +390,13 @@ pub extern "C" fn svsm_main(cpu_index: usize) {
     #[cfg(all(feature = "vtpm", not(test)))]
     vtpm_init(false, &tmc_array).expect("vTPM failed to initialize");
 
+    #[cfg(feature = "attest")]
+    {
+        if let Some(driver) = ATTESTATION_DRIVER.lock().as_mut() {
+            driver.release().expect("Release request failed");
+        }
+    }
+
     #[cfg(all(feature = "uefivars", not(test)))]
     uefi_mm_protocol_init().expect("uefi mm protocol failed to initialize");
 

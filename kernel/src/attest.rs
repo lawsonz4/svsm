@@ -182,6 +182,24 @@ impl AttestationDriver<'_> {
         Ok(secret)
     }
 
+    pub fn release(&mut self) -> Result<(), AttestationError> {
+        let request = ReleaseRequest {
+            mock: String::new(),
+        };
+        verbose_log!(info, "[AttestationDriver] ReleaseRequest is:\n{:#?}", &request);
+
+        self.write(request)?;
+        let payload = self.read()?;
+        let resp: ReleaseResponse = serde_json::from_slice(&payload)
+            .map_err(|_| AttestationError::AttestationDeserialize)?;
+        verbose_log!(info, "[AttestationDriver] ReleaseResponse is:\n{:#?}", &resp);
+
+        if !resp.success {
+            return Err(AttestationError::Failed);
+        }
+        Ok(())
+    }
+
     /// Decrypt a secret from the attestation server with the TEE private key.
     fn decrypt(&self, secret: &mut [u8], decryption: AesGcmData) -> Result<(), AttestationError> {
         let epk: TpmsEccPoint<'static> = decryption.epk.into();

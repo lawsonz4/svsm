@@ -9,10 +9,12 @@
 
 mod attestation;
 mod negotiation;
+mod release;
 mod resource;
 
 pub use attestation::*;
 pub use negotiation::*;
+pub use release::*;
 pub use resource::*;
 
 #[derive(Debug)]

@@ -271,6 +271,26 @@ impl AttestationProtocol for TrusteeProtocol {
         })
 
     }
+
+    fn release(
+        &mut self,
+        http: &mut HttpClient,
+        _request: ReleaseRequest,
+    ) -> anyhow::Result<ReleaseResponse> {
+        let token = get_attestation_token()
+            .ok_or_else(|| anyhow!("attestation token not available"))?;
+
+        let http_resp = http
+            .cli
+            .patch(format!("{}/kbs/v0/resource/lawson/secret/cvm0", http.url))
+            .bearer_auth(&token)
+            .send()
+            .context("unable to PATCH to KBS /resource endpoint for release")?;
+
+        Ok(ReleaseResponse {
+            success: http_resp.status() == StatusCode::OK,
+        })
+    }
 }
 
 

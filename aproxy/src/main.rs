@@ -80,6 +80,15 @@ fn main() -> anyhow::Result<()> {
                         continue;
                     }
 
+                    // Release?
+                    if let Ok(req) = serde_json::from_slice::<libaproxy::ReleaseRequest>(&payload) {
+                        apxy_log!("[aproxy] ReleaseRequest struct from svsm is:\n{:?}", &req);
+                        let response = http_client.release(req)?;
+                        apxy_log!("[aproxy] ReleaseResponse struct from protocol is:\n{:?}", &response);
+                        attest::proxy_write(&mut stream, response)?;
+                        continue;
+                    }
+
                     // Negotiation?
                     if serde_json::from_slice::<libaproxy::NegotiationRequest>(&payload).is_ok() {
                         attest::negotiation_with_payload(payload, &mut stream, &mut http_client)?;
