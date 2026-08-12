@@ -125,13 +125,13 @@ impl AttestationDriver<'_> {
                 .try_into()
                 .map_err(|_| AttestationError::AttestationDeserialize)?,
         };
-        verbose_log!(info, "[AttestationDriver] AttestationRequest is:\n{:#?}", &req);
+        // verbose_log!(info, "[AttestationDriver] AttestationRequest is:\n{:#?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
         let resp: AttestationResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        verbose_log!(info, "[AttestationDriver] AttestationResponse (chipertext) is:\n{:#?}", &resp);
+        // verbose_log!(info, "[AttestationDriver] AttestationResponse (chipertext) is:\n{:#?}", &resp);
 
 
         // check
@@ -165,7 +165,7 @@ impl AttestationDriver<'_> {
         let payload = self.read()?;
         let resp: ResourceResponse = serde_json::from_slice(&payload)
             .map_err(|_| AttestationError::AttestationDeserialize)?;
-        verbose_log!(info, "[DynamicDetectionDriver] ResourceResponse (chipertext) is:\n{:#?}", &resp);
+        // verbose_log!(info, "[DynamicDetectionDriver] ResourceResponse (chipertext) is:\n{:#?}", &resp);
 
         if !resp.success {
             return Err(AttestationError::Failed);
