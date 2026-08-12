@@ -131,6 +131,7 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8], is_pending: u8) -> Resu
     // counter=0 (1st boot): write 1 → proceed normally
     // counter=1 (2nd boot): write 2 → panic (simulate power loss)
     // counter=2 (3rd boot): write 0 → proceed normally
+    /*
     let power_sim_index: Vec<u8> = [0x01, 0xc0, 0x00, 0x02].to_vec();
 
     let counter: u64 = match tss::nvread(vvtpm, &power_sim_index) {
@@ -170,6 +171,7 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8], is_pending: u8) -> Resu
             _ = tss::nvwrite(vvtpm, &power_sim_index, &zero);
         }
     }
+    */
 
     // 发送cap命令
     let  property = [0x01, 0x00, 0x00, 0x00].to_vec();
@@ -207,39 +209,39 @@ pub fn vtpm_init(manufacture: bool, tmc_array: &[u8; 8], is_pending: u8) -> Resu
                     _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
                 } else if tmc_u64 > lmc_u64 + 1 {
                     // c3: Cloning Attack Detected
-                    log::error!("[detect] c3: Static Cloning attack detected! old LMC={}, new TMC={}.", lmc_u64, tmc_u64);
+                    detect_log!(error, "[detect] c3: Static Cloning attack detected! old LMC={}, new TMC={}.", lmc_u64, tmc_u64);
                     if verify_admin_passwd() {
                         // Admin unlocked — allow boot to proceed
                     } else {
-                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                        detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
                     }
                 } else {
                     // c1: Unreachable (M <= N, CLEAR)
-                    log::error!("[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    detect_log!(error, "[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
                     if verify_admin_passwd() {
                     } else {
-                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                        detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
                     }
                 }
             } else {
                 // SET state
-                if tmc_u64 == lmc_u64 + 2 {
+                if tmc_u64 == lmc_u64 + 2 || tmc_u64 == lmc_u64 + 1{
                     // c6: System Crash or Power Loss
-                    log::warn!("[detect] c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    detect_log!(warn, "[detect] c5/c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
                     _ = tss::nvwrite(vvtpm, &lmc_index, &tmc_array);
                 } else if tmc_u64 > lmc_u64 + 2 {
                     // c7: Disguised Cloning Attack
-                    log::error!("[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    detect_log!(error, "[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
                     if verify_admin_passwd() {
                     } else {
-                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                        detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
                     }
                 } else {
-                    // c4/c5: Unreachable (M <= N+1, SET)
-                    log::error!("[detect] c4/c5: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
+                    // c4: Unreachable (M <= N, SET)
+                    detect_log!(error, "[detect] c4: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
                     if verify_admin_passwd() {
                     } else {
-                        log::error!("[detect] Admin authentication failed. System remains locked.");
+                        detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
                     }
                 }
             }
@@ -302,14 +304,14 @@ fn read_serial_line() -> String {
 fn verify_admin_passwd() -> bool {
     const ADMIN_KEY: &str = "root";
 
-    log::info!("[detect] System locked. Enter admin key to unlock:");
+    detect_log!(info, "[detect] System locked. Enter admin key to unlock:");
     let entered = read_serial_line();
 
     if entered == ADMIN_KEY {
-        log::info!("[detect] Admin key accepted. Resuming normal operation.");
+        detect_log!(info, "[detect] Admin key accepted. Resuming normal operation.");
         true
     } else {
-        log::error!("[detect] Invalid admin key '{}'. Access denied.", entered);
+        detect_log!(error, "[detect] Invalid admin key '{}'. Access denied.", entered);
         false
     }
 }

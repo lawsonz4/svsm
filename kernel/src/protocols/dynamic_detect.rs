@@ -6,6 +6,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Local verbose switch: true = print all [detect] logs (default on).
 const DETECT_VERBOSE: bool = true;
@@ -16,6 +17,18 @@ macro_rules! detect_log {
             log::$lvl!($($arg)*);
         }
     };
+}
+
+/// Global flag: when set, the dynamic detection will simulate a power loss
+/// (soft power-off) after completing its checks.
+static SIMULATE_POWER_LOSS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_simulate_power_loss(flag: bool) {
+    SIMULATE_POWER_LOSS.store(flag, Ordering::SeqCst);
+}
+
+fn get_simulate_power_loss() -> bool {
+    SIMULATE_POWER_LOSS.load(Ordering::SeqCst)
 }
 
 use crate::attest::ATTESTATION_DRIVER;
@@ -121,24 +134,24 @@ fn do_dynamic_detection() {
             }
         } else if tmc_u64 > lmc_u64 + 1 {
             // c3: Cloning Attack Detected
-            log::error!("[detect] c3: Clone attack detected! LMC={}, TMC={}.", lmc_u64, tmc_u64);
+            detect_log!(error, "[detect] c3: Clone attack detected! LMC={}, TMC={}.", lmc_u64, tmc_u64);
             if verify_admin_passwd() {
             } else {
-                log::error!("[detect] Admin authentication failed. System remains locked.");
+                detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
             }
         } else {
             // c1: Unreachable (M <= N, CLEAR)
-            log::error!("[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
+            detect_log!(error, "[detect] c1: Unreachable state (M<=N, CLEAR): LMC={}, TMC={}", lmc_u64, tmc_u64);
             if verify_admin_passwd() {
             } else {
-                log::error!("[detect] Admin authentication failed. System remains locked.");
+                detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
             }
         }
     } else {
         // SET state
-        if tmc_u64 == lmc_u64 + 2 {
+        if tmc_u64 == lmc_u64 + 2 || tmc_u64 == lmc_u64 + 1 {
             // c6: System Crash or Power Loss
-            log::warn!("[detect] c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+            detect_log!(warn, "[detect] c5/c6: System crash or power loss detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
             let tmc_array: [u8; 8] = tmc_bytes
                 .as_slice()
                 .try_into()
@@ -148,22 +161,30 @@ fn do_dynamic_detection() {
             }
         } else if tmc_u64 > lmc_u64 + 2 {
             // c7: Disguised Cloning Attack
-            log::error!("[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
+            detect_log!(error, "[detect] c7: Disguised cloning attack detected! LMC={}, TMC={}", lmc_u64, tmc_u64);
             if verify_admin_passwd() {
             } else {
-                log::error!("[detect] Admin authentication failed. System remains locked.");
+                detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
             }
         } else {
-            // c4/c5: Unreachable (M <= N+1, SET)
-            log::error!("[detect] c4/c5: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
+            // c4: Unreachable (M < N+1, SET)
+            detect_log!(error, "[detect] c4: Unreachable state (M<=N+1, SET): LMC={}, TMC={}", lmc_u64, tmc_u64);
             if verify_admin_passwd() {
             } else {
-                log::error!("[detect] Admin authentication failed. System remains locked.");
+                detect_log!(error, "[detect] Admin authentication failed. System remains locked.");
             }
         }
     }
 
-    // Step 4: notify KBS to release resources
+    // Step 4: if the simulate flag was set, perform a soft power-off.
+    // This must happen before releasing KBS resources, so the power loss
+    // is observed as an abrupt termination mid-detection.
+    if get_simulate_power_loss() {
+        detect_log!(info, "[detect] simulate flag set, performing soft power-off");
+        crate::sev::msr_protocol::request_termination_msr();
+    }
+
+    // Step 5: notify KBS to release resources
     {
         let mut driver = ATTESTATION_DRIVER.lock();
         if let Some(driver) = driver.as_mut() {
@@ -231,14 +252,14 @@ fn read_serial_line() -> String {
 fn verify_admin_passwd() -> bool {
     const ADMIN_KEY: &str = "root";
 
-    log::info!("[detect] System locked. Enter admin key to unlock:");
+    detect_log!(info, "[detect] System locked. Enter admin key to unlock:");
     let entered = read_serial_line();
 
     if entered == ADMIN_KEY {
-        log::info!("[detect] Admin key accepted. Resuming normal operation.");
+        detect_log!(info, "[detect] Admin key accepted. Resuming normal operation.");
         true
     } else {
-        log::error!("[detect] Invalid admin key '{}'. Access denied.", entered);
+        detect_log!(error, "[detect] Invalid admin key '{}'. Access denied.", entered);
         false
     }
 }

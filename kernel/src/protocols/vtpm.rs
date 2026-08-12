@@ -18,6 +18,7 @@ use crate::{
     types::PAGE_SIZE,
     vtpm::{vtpm_get_locked, TcgTpmSimulatorInterface, VtpmProtocolInterface},
 };
+use crate::verbose_log;
 
 /// vTPM platform commands (SVSM spec, section 8.1 - SVSM_VTPM_QUERY)
 ///
@@ -207,14 +208,24 @@ fn vtpm_command_request(params: &RequestParams) -> Result<(), SvsmReqError> {
             // Check CC for custom detect trigger (vendor-specific: 0x20000001).
             // TpmSendCommandRequest: command(4) + locality(1) + inbuf_size(4) = 9
             // TPM header: tag(2) + size(4) + CC(4) → CC at offset 9+6=15
+            // Body byte at offset 19 (9 + 10 header bytes)
             #[cfg(all(feature = "attest", feature = "vtpm", not(test)))]
-            if buffer.len() >= 19 {
+            if buffer.len() >= 20 {
                 let tag = u16::from_be_bytes(buffer[9..11].try_into().unwrap());
-                if (tag == 0x8001 || tag == 0x8002) {
-                    let cc = u32::from_be_bytes(buffer[15..19].try_into().unwrap());
+                let cc = u32::from_be_bytes(buffer[15..19].try_into().unwrap());
+                let body = buffer[19];
+                verbose_log!(info, "[vtpm-cc] tag=0x{:04x}, cc=0x{:08x}, body=0x{:02x}", tag, cc, body);
+                if tag == 0x8001 || tag == 0x8002 {
                     if cc == 0x20000001 {
-                        // log::info!("[vtpm-cc] SVSM detect trigger (CC=0x20000001)");
+                        // Set global simulate flag before triggering detection.
+                        // body=0x01 → simulate power loss after detection completes.
+                        crate::protocols::dynamic_detect::set_simulate_power_loss(body == 0x01);
+
+                        // Trigger dynamic detection (post-poned until after the flag is set)
                         crate::protocols::dynamic_detect::trigger_dynamic_detection();
+
+                        // Do not forward this vendor command to the vTPM
+                        return Ok(());
                     }
                 }
             }
