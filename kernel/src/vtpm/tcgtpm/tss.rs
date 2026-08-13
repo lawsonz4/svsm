@@ -208,7 +208,7 @@ fn nvdefine_cmd_8bytes(index :&Vec<u8>, nvtype : &str) -> Vec<u8>{
         ]);
     }
     _ =>{
-        log::info!("[vtpm-nvdefine] nvdefinespace type mismatch")
+        verbose_log!(info, "[vtpm-nvdefine] nvdefinespace type mismatch")
     }
 }
     cmd

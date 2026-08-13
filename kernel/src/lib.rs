@@ -56,10 +56,23 @@ pub mod vtpm;
 /// format strings and log calls are removed from the binary entirely.
 #[macro_export]
 macro_rules! verbose_log {
-    ($lvl:ident, $($arg:tt)*) => {
+    ($lvl:ident, $($arg:tt)*) => {{
         #[cfg(feature = "verbose-log")]
         log::$lvl!($($arg)*);
-    };
+    }};
+}
+
+/// Compile-time switch for `[detect]` cloning-detection logs.
+///
+/// Enable the `detect-log` cargo feature to compile these logs in.
+/// When the feature is off, each `detect_log!` expands to nothing, so the
+/// format strings and log calls are removed from the binary entirely.
+#[macro_export]
+macro_rules! detect_log {
+    ($lvl:ident, $($arg:tt)*) => {{
+        #[cfg(feature = "detect-log")]
+        log::$lvl!($($arg)*);
+    }};
 }
 
 #[test]

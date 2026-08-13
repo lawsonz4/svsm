@@ -13,7 +13,7 @@ pub mod tcgtpm;
 extern crate alloc;
 
 use crate::verbose_log;
-use crate::verbose_log as detect_log;
+use crate::detect_log;
 use alloc::vec::Vec;
 use alloc::string::String;
 

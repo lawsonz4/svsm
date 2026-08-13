@@ -22,7 +22,7 @@ fn get_simulate_power_loss() -> bool {
 
 use crate::attest::ATTESTATION_DRIVER;
 use crate::error::SvsmError;
-use crate::verbose_log as detect_log;
+use crate::detect_log;
 use crate::protocols::errors::SvsmReqError;
 use crate::protocols::RequestParams;
 use crate::serial::{SerialPort, Terminal, DEFAULT_SERIAL_PORT};

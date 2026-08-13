@@ -5,13 +5,10 @@
 // Author: Stefano Garzarella <sgarzare@redhat.com>
 // Author: Tyler Fanelli <tfanelli@redhat.com>
 
-const DETECT_VERBOSE: bool = true;
-
 macro_rules! apxy_log {
     ($($arg:tt)*) => {
-        if $crate::DETECT_VERBOSE {
-            println!($($arg)*);
-        }
+        #[cfg(feature = "aproxy-log")]
+        println!($($arg)*);
     };
 }
 
