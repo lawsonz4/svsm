@@ -49,17 +49,16 @@ pub mod vmm;
 #[cfg(all(feature = "vtpm", not(test)))]
 pub mod vtpm;
 
-/// Global verbose switch for all [xxx] debug logs.
-pub const DETECT_VERBOSE: bool = true;
-
-/// Conditionally emit a log when `DETECT_VERBOSE` is true.
-/// Works everywhere without imports — just like `log::info!()`.
+/// Compile-time verbose switch for all `[xxx]` debug logs.
+///
+/// Enable the `verbose-log` cargo feature to compile these logs in.
+/// When the feature is off, each `verbose_log!` expands to nothing, so the
+/// format strings and log calls are removed from the binary entirely.
 #[macro_export]
 macro_rules! verbose_log {
     ($lvl:ident, $($arg:tt)*) => {
-        if $crate::DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
+        #[cfg(feature = "verbose-log")]
+        log::$lvl!($($arg)*);
     };
 }
 

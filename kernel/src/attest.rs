@@ -88,13 +88,13 @@ impl AttestationDriver<'_> {
             version: "0.4.0".to_string(), // Only version supported at present.
             tee: self.tee,
         };
-        verbose_log!(info, "[AttestationDriver] NegotiationRequest is:\n{:#?}", &req);
+        // verbose_log!(info, "[AttestationDriver] NegotiationRequest is:\n{:#?}", &req);
 
         self.write(req)?;
         let payload = self.read()?;
 
         let resp = serde_json::from_slice(&payload).or(Err(AttestationError::NegotiationDeserialize));
-        verbose_log!(info, "[AttestationDriver] NegotiationResponse is:\n{:#?}", &resp);
+        // verbose_log!(info, "[AttestationDriver] NegotiationResponse is:\n{:#?}", &resp);
         resp
     }
 
@@ -159,7 +159,7 @@ impl AttestationDriver<'_> {
         let request = ResourceRequest {
             token: AttestationToken::Jwt(String::new()),
         };
-        verbose_log!(info, "[DynamicDetectionDriver] ResourceRequest is:\n{:#?}", &request);
+        // verbose_log!(info, "[DynamicDetectionDriver] ResourceRequest is:\n{:#?}", &request);
 
         self.write(request)?;
         let payload = self.read()?;

@@ -102,6 +102,7 @@ attest = [
 ]
 default = []
 enable-gdb = ["dep:gdbstub", "dep:gdbstub_arch"]
+# verbose-log = []
 vtpm = ["dep:libtcgtpm"]
 nosmep = []
 nosmap = []

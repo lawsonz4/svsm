@@ -13,6 +13,7 @@ pub mod tcgtpm;
 extern crate alloc;
 
 use crate::verbose_log;
+use crate::verbose_log as detect_log;
 use alloc::vec::Vec;
 use alloc::string::String;
 
@@ -22,18 +23,6 @@ use crate::vtpm::tcgtpm::tss;
 use crate::serial::{SerialPort, Terminal, DEFAULT_SERIAL_PORT};
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
-
-/// Local verbose switch: true = print all [detect] logs (default on).
-const DETECT_VERBOSE: bool = true;
-
-#[cfg(feature = "attest")]
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
 
 /// Basic services required to perform the VTPM Protocol
 pub trait VtpmProtocolInterface {

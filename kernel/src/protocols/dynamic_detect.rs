@@ -8,17 +8,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// Local verbose switch: true = print all [detect] logs (default on).
-const DETECT_VERBOSE: bool = true;
-
-macro_rules! detect_log {
-    ($lvl:ident, $($arg:tt)*) => {
-        if DETECT_VERBOSE {
-            log::$lvl!($($arg)*);
-        }
-    };
-}
-
 /// Global flag: when set, the dynamic detection will simulate a power loss
 /// (soft power-off) after completing its checks.
 static SIMULATE_POWER_LOSS: AtomicBool = AtomicBool::new(false);
@@ -33,6 +22,7 @@ fn get_simulate_power_loss() -> bool {
 
 use crate::attest::ATTESTATION_DRIVER;
 use crate::error::SvsmError;
+use crate::verbose_log as detect_log;
 use crate::protocols::errors::SvsmReqError;
 use crate::protocols::RequestParams;
 use crate::serial::{SerialPort, Terminal, DEFAULT_SERIAL_PORT};
